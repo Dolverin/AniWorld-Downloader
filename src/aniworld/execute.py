@@ -8,17 +8,7 @@ from typing import Dict, List, Optional, Any
 
 from bs4 import BeautifulSoup
 
-
-from aniworld.extractors import (
-    doodstream_get_direct_link,
-    streamtape_get_direct_link,
-    vidoza_get_direct_link,
-    voe_get_direct_link,
-    vidmoly_get_direct_link,
-    speedfiles_get_direct_link
-)
-
-
+from aniworld.globals import PROVIDER_PRIORITY
 from aniworld.common import (
     clean_up_leftovers,
     execute_command,
@@ -34,6 +24,14 @@ from aniworld.common import (
     setup_autoexit
 )
 
+from aniworld.extractors import (
+    doodstream_get_direct_link,
+    streamtape_get_direct_link,
+    vidoza_get_direct_link,
+    voe_get_direct_link,
+    vidmoly_get_direct_link,
+    speedfiles_get_direct_link
+)
 
 from aniworld.aniskip import aniskip
 
@@ -490,13 +488,9 @@ def execute(params: Dict[str, Any]) -> None:
 
 
 def process_episode(params: Dict[str, Any]) -> None:
+    logging.debug("Processing episode: %s", params['episode_url'])
     try:
-        logging.debug("Fetching episode HTML for URL: %s", params['episode_url'])
         episode_html = fetch_url_content(params['episode_url'])
-        if episode_html is None:
-            logging.debug("No HTML content fetched for URL: %s", params['episode_url'])
-            return
-
         soup = BeautifulSoup(episode_html, 'html.parser')
         episode_title = get_episode_title(soup)
         anime_title = get_anime_title(soup)
@@ -505,11 +499,30 @@ def process_episode(params: Dict[str, Any]) -> None:
         logging.debug("Language Code: %s", params['lang'])
         logging.debug("Available Providers: %s", data.keys())
 
-        providers_to_try = [params['provider_selected']] + [
-            p for p in params['provider_mapping'] if p != params['provider_selected']
-        ]
+        # Priorisierte Provider-Liste verwenden
+        available_providers = set(data.keys())
+        
+        # Initialisiere eine leere Liste für die zu versuchenden Provider
+        providers_to_try = []
+        
+        # Zuerst den ausgewählten Provider hinzufügen, falls er verfügbar ist
+        if params['provider_selected'] in available_providers:
+            providers_to_try.append(params['provider_selected'])
+            
+        # Dann die restlichen Provider gemäß der Prioritätsliste hinzufügen
+        for provider in PROVIDER_PRIORITY:
+            if provider in available_providers and provider != params['provider_selected']:
+                providers_to_try.append(provider)
+        
+        # Prüfen, ob irgendwelche Provider verfügbar sind
+        if not providers_to_try:
+            logging.error("Keine Provider verfügbar für diese Episode: %s", params['episode_url'])
+            return
+            
+        # Durch die Provider iterieren und versuchen, die Episode herunterzuladen
         for provider in providers_to_try:
-            if provider in data:
+            try:
+                logging.info("Versuche Provider: %s", provider)
                 process_provider({
                     'provider': provider,
                     'data': data,
@@ -525,13 +538,16 @@ def process_episode(params: Dict[str, Any]) -> None:
                     'only_direct_link': params['only_direct_link'],
                     'only_command': params['only_command']
                 })
+                # Wenn erfolgreich, breche die Schleife ab
+                logging.debug("Provider %s erfolgreich verwendet", provider)
                 break
-            logging.info("Provider %s not available, trying next provider.", provider)
+            except Exception as e:
+                logging.warning("Provider %s fehlgeschlagen: %s", provider, str(e))
+                continue
         else:
-            logging.error(
-                "Provider %s not found in available providers.",
-                params['provider_selected']
-            )
+            # Wenn alle Provider fehlschlagen
+            logging.error("Alle verfügbaren Provider sind fehlgeschlagen für Episode: %s", params['episode_url'])
+            
     except AttributeError:
         logging.warning("Episode broken.")
 
@@ -551,7 +567,8 @@ def process_provider(params: Dict[str, Any]) -> None:
             link = fetch_direct_link(provider_function, request_url)
 
             if link is None:
-                continue
+                logging.warning("Provider %s konnte keinen direkten Link liefern", params['provider'])
+                raise Exception(f"Provider {params['provider']} konnte keinen direkten Link liefern")
 
             if params['only_direct_link']:
                 logging.debug("Only direct link requested: %s", link)
@@ -583,18 +600,20 @@ def process_provider(params: Dict[str, Any]) -> None:
 
             logging.debug("Performing action with params: %s", episode_params)
             perform_action(episode_params)
-            break
-    else:
-        available_languages = [
-            get_language_string(lang_code)
-            for lang_code in params['data'][params['provider']].keys()
-        ]
+            return  # Erfolgreich verarbeitet
+    
+    # Wenn wir hierher kommen, wurde keine passende Sprache gefunden
+    available_languages = [
+        get_language_string(lang_code)
+        for lang_code in params['data'][params['provider']].keys()
+    ]
 
-        message = (
-            f"No available languages for provider {params['provider']} "
-            f"matching the selected language {get_language_string(int(params['lang']))}. "
-            f"\nAvailable languages: {available_languages}"
-        )
+    message = (
+        f"Keine verfügbaren Sprachen für Provider {params['provider']} "
+        f"die der ausgewählten Sprache {get_language_string(int(params['lang']))} entsprechen. "
+        f"\nVerfügbare Sprachen: {available_languages}"
+    )
 
-        logging.warning(message)
-        print(message)
+    logging.warning(message)
+    print(message)
+    raise Exception(message)  # Ausnahme werfen, damit der nächste Provider versucht wird

@@ -22,6 +22,17 @@ DEFAULT_PROXY = None
 DEFAULT_USE_PLAYWRIGHT = False
 DEFAULT_TERMINAL_SIZE = (90, 32)
 
+# Priorisierte Liste der Provider gemäß Empfehlung:
+# VOE > Vidoza > Streamtape > andere
+PROVIDER_PRIORITY = [
+    "VOE",        # Erste Priorität
+    "Vidoza",     # Zweite Priorität
+    "Streamtape", # Dritte Priorität
+    "Doodstream", # Restliche Provider
+    "Vidmoly",
+    "SpeedFiles"
+]
+
 log_colors = {
     'DEBUG': 'bold_blue',
     'INFO': 'bold_green',
