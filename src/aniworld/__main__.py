@@ -134,6 +134,13 @@ class EpisodeForm(npyscreen.ActionForm):
             key=lambda x: (x[0] if x[0] > 0 else 999, x[1])
         )
 
+        # Episoden nach Staffeln gruppieren
+        self.seasons_map = {}
+        for season, episode, title, url in sorted_results:
+            if season not in self.seasons_map:
+                self.seasons_map[season] = []
+            self.seasons_map[season].append((episode, title))
+
         season_episode_map = {title: url for _, _, title, url in sorted_results}
         self.episode_map = season_episode_map
 
@@ -206,7 +213,7 @@ class EpisodeForm(npyscreen.ActionForm):
 
         logging.debug("Provider selector created")
 
-        self.add(npyscreen.FixedText, value="", editable=False)  # new line
+        self.add(npyscreen.FixedText, value="", editable=False)
         self.episode_selector = self.add(
             npyscreen.TitleMultiSelect,
             name="Episode Selection",
@@ -217,6 +224,33 @@ class EpisodeForm(npyscreen.ActionForm):
         logging.debug("Episode selector created")
 
         self.add(npyscreen.FixedText, value="")
+        
+        # Dropdown für Staffelauswahl
+        self.season_selector = self.add(
+            npyscreen.TitleSelectOne, 
+            name="Staffel auswählen:",
+            values=["Staffel " + str(season) if season > 0 else "Filme" for season in sorted(self.seasons_map.keys())],
+            max_height=4,
+            scroll_exit=True
+        )
+        
+        # Button zum Auswählen aller Episoden einer Staffel
+        self.select_season_button = self.add(
+            npyscreen.ButtonPress,
+            name="Alle Episoden dieser Staffel auswählen",
+            max_height=1,
+            when_pressed_function=self.select_season_episodes,
+            scroll_exit=True
+        )
+
+        # Button zum Auswählen aller Episoden hinzufügen
+        self.select_all_button = self.add(
+            npyscreen.ButtonPress,
+            name="Alle Episoden auswählen",
+            max_height=1,
+            when_pressed_function=self.select_all_episodes,
+            scroll_exit=True
+        )
 
         self.display_text = False
 
@@ -365,6 +399,44 @@ class EpisodeForm(npyscreen.ActionForm):
 
     def go_to_second_form(self):
         self.parentApp.switchForm("SECOND")
+
+    def select_all_episodes(self):
+        """Wählt alle Episoden in der MultiSelect-Liste aus."""
+        logging.debug("Selecting all episodes")
+        all_indices = list(range(len(self.episode_selector.values)))
+        self.episode_selector.value = all_indices
+        self.episode_selector.display()
+    
+    def select_season_episodes(self):
+        """Wählt alle Episoden der ausgewählten Staffel aus."""
+        if not self.season_selector.value:
+            return
+        
+        selected_season_idx = self.season_selector.value[0]
+        seasons = sorted(self.seasons_map.keys())
+        selected_season = seasons[selected_season_idx]
+        
+        logging.debug("Selecting all episodes for season {}".format(selected_season))
+        
+        # Episodentitel für diese Staffel finden
+        season_episodes = [title for _, title in self.seasons_map[selected_season]]
+        
+        # Indizes dieser Episoden in der episode_selector-Liste finden
+        indices_to_select = []
+        for i, title in enumerate(self.episode_selector.values):
+            if title in season_episodes:
+                indices_to_select.append(i)
+        
+        # Diese Episoden in der MultiSelect-Liste auswählen
+        if self.episode_selector.value:
+            # Bestehende Auswahl behalten und neue hinzufügen
+            current_selection = set(self.episode_selector.value)
+            current_selection.update(indices_to_select)
+            self.episode_selector.value = list(current_selection)
+        else:
+            self.episode_selector.value = indices_to_select
+        
+        self.episode_selector.display()
 
 
 # pylint: disable=R0901
