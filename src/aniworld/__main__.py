@@ -13,6 +13,10 @@ import random
 import signal
 import textwrap
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import socket
+import colorlog
+from queue import Queue
+import time
 
 import npyscreen
 
@@ -40,7 +44,8 @@ from aniworld.common import (
     check_internet_connection,
     adventure,
     get_description,
-    get_description_with_id
+    get_description_with_id,
+    check_if_episode_exists
 )
 from aniworld.extractors import (
     nhentai,
@@ -106,6 +111,10 @@ class EpisodeForm(npyscreen.ActionForm):
         self.setup_signal_handling()
 
         anime_season_title = get_anime_season_title(slug=anime_slug, season=1)
+        self.anime_title = anime_season_title
+        
+        # Speichern der Anime-Information für spätere Verwendung
+        self.anime_slug = anime_slug
 
         def process_url(url):
             logging.debug("Processing URL: %s", url)
@@ -140,6 +149,11 @@ class EpisodeForm(npyscreen.ActionForm):
             if season not in self.seasons_map:
                 self.seasons_map[season] = []
             self.seasons_map[season].append((episode, title))
+            
+        # Speichern der Original-Infos für jede Episode (Staffel, Episode)
+        self.episode_info = {}
+        for season, episode, title, url in sorted_results:
+            self.episode_info[title] = (season, episode)
 
         season_episode_map = {title: url for _, _, title, url in sorted_results}
         self.episode_map = season_episode_map
@@ -212,18 +226,23 @@ class EpisodeForm(npyscreen.ActionForm):
         )
 
         logging.debug("Provider selector created")
+        
+        # Status-Text für Benachrichtigungen hinzufügen
+        self.status_text = self.add(
+            npyscreen.TitleFixedText,
+            name="Status:",
+            value="",
+            editable=False
+        )
 
-        self.add(npyscreen.FixedText, value="", editable=False)
         self.episode_selector = self.add(
             npyscreen.TitleMultiSelect,
             name="Episode Selection",
             values=episode_list,
-            max_height=7,
+            max_height=6,
             scroll_exit=True
         )
         logging.debug("Episode selector created")
-
-        self.add(npyscreen.FixedText, value="")
         
         # Dropdown für Staffelauswahl
         self.season_selector = self.add(
@@ -231,6 +250,33 @@ class EpisodeForm(npyscreen.ActionForm):
             name="Staffel auswählen:",
             values=["Staffel " + str(season) if season > 0 else "Filme" for season in sorted(self.seasons_map.keys())],
             max_height=4,
+            scroll_exit=True
+        )
+        
+        # Button zum Markieren vorhandener Episoden
+        self.mark_existing_button = self.add(
+            npyscreen.ButtonPress,
+            name="Vorhandene Episoden markieren",
+            max_height=1,
+            when_pressed_function=self.mark_existing_episodes,
+            scroll_exit=True
+        )
+        
+        # Button zum Filtern und Anzeigen nur fehlender Episoden
+        self.filter_missing_button = self.add(
+            npyscreen.ButtonPress,
+            name="Nur fehlende Episoden anzeigen",
+            max_height=1,
+            when_pressed_function=self.show_only_missing_episodes,
+            scroll_exit=True
+        )
+        
+        # Button zum Auswählen aller fehlenden Episoden
+        self.select_missing_button = self.add(
+            npyscreen.ButtonPress,
+            name="Alle fehlenden Episoden auswählen",
+            max_height=1,
+            when_pressed_function=self.select_all_missing_episodes,
             scroll_exit=True
         )
         
@@ -253,6 +299,9 @@ class EpisodeForm(npyscreen.ActionForm):
         )
 
         self.display_text = False
+        
+        # Automatisch nach vorhandenen Episoden suchen
+        threading.Timer(0.5, self.mark_existing_episodes).start()
 
         self.toggle_button = self.add(
             npyscreen.ButtonPress,
@@ -314,7 +363,8 @@ class EpisodeForm(npyscreen.ActionForm):
         logging.debug("Output directory: %s", output_directory)
         if not output_directory and not self.directory_field.hidden:
             logging.debug("No output directory provided")
-            npyscreen.notify_confirm("Please provide a directory.", title="Error")
+            self.status_text.value = "Bitte geben Sie ein Verzeichnis an."
+            self.display()
             return
 
         selected_episodes = self.episode_selector.get_selected_objects()
@@ -331,18 +381,66 @@ class EpisodeForm(npyscreen.ActionForm):
 
         if not (selected_episodes and action_selected and language_selected):
             logging.debug("No episodes or action or language selected")
-            npyscreen.notify_confirm("No episodes selected.", title="Selection")
+            self.status_text.value = "Keine Episoden ausgewählt."
+            self.display()
             return
+            
+        # Die markierten Episoden entfernen und Original-Titel wiederherstellen
+        cleaned_selected_episodes = []
+        for episode in selected_episodes:
+            if episode.startswith("[✓] ") or episode.startswith("[✗] "):
+                # Titel ohne Markierung
+                cleaned_episode = episode[4:]
+                cleaned_selected_episodes.append(cleaned_episode)
+            else:
+                cleaned_selected_episodes.append(episode)
+        
+        # Überprüfen, ob der Benutzer bereits heruntergeladene Episoden erneut herunterladen möchte
+        existing_episodes_selected = []
+        for episode in selected_episodes:
+            if episode.startswith("[✓] "):
+                existing_episodes_selected.append(episode)
+        
+        if existing_episodes_selected and action_selected[0] == "Download":
+            # Bestätigung vom Benutzer einholen
+            confirm = npyscreen.notify_yes_no(
+                f"Sie haben {len(existing_episodes_selected)} bereits heruntergeladene Episoden ausgewählt. "
+                "Möchten Sie diese erneut herunterladen?",
+                title="Bestätigung erforderlich"
+            )
+            
+            if not confirm:
+                # Wenn der Benutzer 'Nein' wählt, die bereits heruntergeladenen Episoden aus der Auswahl entfernen
+                cleaned_selected_episodes = [
+                    episode for episode in cleaned_selected_episodes 
+                    if episode not in [e[4:] for e in existing_episodes_selected]
+                ]
+                
+                if not cleaned_selected_episodes:
+                    self.status_text.value = "Keine neuen Episoden zum Herunterladen ausgewählt."
+                    self.display()
+                    return
 
         lang = self.get_language_code(language_selected[0])
         logging.debug("Language code: %s", lang)
         provider_selected = self.validate_provider(provider_selected)
         logging.debug("Validated provider: %s", provider_selected)
 
-        selected_urls = [self.episode_map[episode] for episode in selected_episodes]
-        selected_str = "\n".join(selected_episodes)
+        # Den bereinigten Titel verwenden, um die URLs zu finden
+        selected_urls = []
+        for episode in cleaned_selected_episodes:
+            if episode in self.episode_map:
+                selected_urls.append(self.episode_map[episode])
+            
+        selected_str = "\n".join(cleaned_selected_episodes)
         logging.debug("Selected URLs: %s", selected_urls)
-        npyscreen.notify_confirm(f"Selected episodes:\n{selected_str}", title="Selection")
+        
+        # Status-Nachricht: Ausgewählte Episoden
+        if len(cleaned_selected_episodes) <= 3:
+            self.status_text.value = f"Ausgewählte Episoden: {', '.join(cleaned_selected_episodes)}"
+        else:
+            self.status_text.value = f"{len(cleaned_selected_episodes)} Episoden ausgewählt"
+        self.display()
 
         if not self.directory_field.hidden:
             output_directory = os.path.join(output_directory)
@@ -406,6 +504,10 @@ class EpisodeForm(npyscreen.ActionForm):
         all_indices = list(range(len(self.episode_selector.values)))
         self.episode_selector.value = all_indices
         self.episode_selector.display()
+        
+        # Status-Nachricht aktualisieren
+        self.status_text.value = f"Alle {len(all_indices)} Episoden wurden ausgewählt."
+        self.display()
     
     def select_season_episodes(self):
         """Wählt alle Episoden der ausgewählten Staffel aus."""
@@ -419,13 +521,23 @@ class EpisodeForm(npyscreen.ActionForm):
         logging.debug("Selecting all episodes for season {}".format(selected_season))
         
         # Episodentitel für diese Staffel finden
-        season_episodes = [title for _, title in self.seasons_map[selected_season]]
+        season_episodes = []
+        for _, title in self.seasons_map[selected_season]:
+            season_episodes.append(title)
         
         # Indizes dieser Episoden in der episode_selector-Liste finden
         indices_to_select = []
         for i, title in enumerate(self.episode_selector.values):
-            if title in season_episodes:
-                indices_to_select.append(i)
+            # Titel bereinigen, falls er markiert ist
+            cleaned_title = title
+            if title.startswith("[✓] ") or title.startswith("[✗] "):
+                cleaned_title = title[4:]
+            
+            # Basistitel in der episode_info suchen
+            for original_title in season_episodes:
+                if original_title == cleaned_title or original_title + " ([✓])" == cleaned_title or original_title + " ([✗])" == cleaned_title:
+                    indices_to_select.append(i)
+                    break
         
         # Diese Episoden in der MultiSelect-Liste auswählen
         if self.episode_selector.value:
@@ -437,6 +549,211 @@ class EpisodeForm(npyscreen.ActionForm):
             self.episode_selector.value = indices_to_select
         
         self.episode_selector.display()
+        
+        # Status-Nachricht aktualisieren
+        season_name = "Staffel " + str(selected_season) if selected_season > 0 else "Filme"
+        self.status_text.value = f"{len(indices_to_select)} Episoden von {season_name} wurden ausgewählt."
+        self.display()
+
+    def mark_existing_episodes(self):
+        """Markiert bereits existierende Episoden in der Liste"""
+        download_path = self.directory_field.value or aniworld_globals.DEFAULT_DOWNLOAD_PATH
+        language = ["German Dub", "English Sub", "German Sub"][self.language_selector.value[0]]
+        
+        logging.info(f"DEBUG-UI: Starte Suche nach vorhandenen Episoden, Pfad: {download_path}, Sprache: {language}")
+        logging.info(f"DEBUG-UI: Anime-Titel: {self.anime_title}, {len(self.episode_selector.values)} Episoden zu prüfen")
+        
+        self.existing_episodes = []
+        new_values = []
+        
+        # Status-Nachricht aktualisieren
+        self.status_text.value = "Suche nach vorhandenen Episoden..."
+        self.display()
+        
+        # Verwende ein Queue für die Ergebnisse des Hintergrund-Scans
+        result_queue = Queue()
+        
+        # Erstelle einen Thread für die Überprüfung der Episoden
+        def check_episodes_thread():
+            try:
+                for i, title in enumerate(self.episode_selector.values):
+                    # Bei jedem 5. Element UI aktualisieren
+                    if i % 5 == 0:
+                        self.status_text.value = f"Suche nach vorhandenen Episoden... ({i+1}/{len(self.episode_selector.values)})"
+                        self.display()
+                    
+                    # Überprüfen, ob die Episode bereits existiert
+                    if title.startswith("[✓] ") or title.startswith("[✗] "):
+                        # Bereits markiert, Original-Titel extrahieren
+                        original_title = title[4:]
+                        logging.debug(f"DEBUG-UI: Prüfe bereits markierte Episode: {original_title}")
+                        try:
+                            season, episode = self.episode_info[original_title]
+                        except KeyError:
+                            logging.error(f"DEBUG-UI: Keine Info für {original_title} gefunden, überspringe")
+                            result_queue.put((i, title, False, False))  # Keine Info, überspringen
+                            continue
+                    else:
+                        # Nicht markiert, Staffel- und Episodennummer aus dem Titel extrahieren
+                        logging.debug(f"DEBUG-UI: Prüfe unmarkierte Episode: {title}")
+                        try:
+                            season, episode = self.episode_info[title]
+                        except KeyError:
+                            logging.error(f"DEBUG-UI: Keine Info für {title} gefunden, überspringe")
+                            result_queue.put((i, title, False, False))  # Keine Info, überspringen
+                            continue
+                    
+                    # Logge die Episode, die wir überprüfen
+                    logging.info(f"DEBUG-UI: Prüfe Episode {i+1}/{len(self.episode_selector.values)}: S{season}E{episode}, Titel: {title}")
+                    
+                    try:
+                        # Episode im Dateisystem suchen
+                        exists = check_if_episode_exists(
+                            self.anime_title, 
+                            season, 
+                            episode, 
+                            language, 
+                            download_path
+                        )
+                        logging.debug(f"DEBUG-UI: Ergebnis für S{season}E{episode}: {'Gefunden' if exists else 'Nicht gefunden'}")
+                        # Ergebnis in die Queue schreiben
+                        result_queue.put((i, title, exists, True))  # Valides Ergebnis
+                    except Exception as e:
+                        # Bei Fehler Eintrag überspringen
+                        logging.error(f"DEBUG-UI: Fehler bei Prüfung von S{season}E{episode}: {str(e)}")
+                        result_queue.put((i, title, False, False))  # Fehler, als nicht gefunden markieren
+                
+                # Signal für Ende
+                result_queue.put(None)
+            except Exception as e:
+                # Bei Fehler Signal senden
+                logging.error(f"DEBUG-UI: Kritischer Fehler beim Überprüfen von Episoden: {e}")
+                result_queue.put(f"ERROR: {str(e)}")
+        
+        # Thread starten
+        scan_thread = threading.Thread(target=check_episodes_thread, daemon=True)
+        scan_thread.start()
+        
+        # Auf Ergebnisse warten mit Timeout
+        episodes_found = 0
+        episodes_checked = 0
+        start_time = time.time()
+        timeout = 300  # Maximale Wartezeit auf 5 Minuten erhöht
+        
+        while True:
+            # Prüfen, ob der Scan zu lange dauert
+            if time.time() - start_time > timeout:
+                logging.error(f"DEBUG-UI: Zeitüberschreitung nach {timeout} Sekunden. {episodes_checked} von {len(self.episode_selector.values)} geprüft.")
+                self.status_text.value = f"Zeitüberschreitung bei der Suche. {episodes_checked} von {len(self.episode_selector.values)} Episoden geprüft."
+                self.display()
+                # Thread beenden lassen und mit den bisherigen Ergebnissen fortfahren
+                break
+                
+            # Auf Ergebnis mit kurzem Timeout warten, damit die UI nicht blockiert
+            try:
+                result = result_queue.get(timeout=0.1)
+            except:
+                # Timeout bei Queue.get, aber weiter warten
+                continue
+                
+            # Prüfen, ob Ende oder Fehler
+            if result is None:
+                logging.info(f"DEBUG-UI: Alle {episodes_checked} Episoden wurden geprüft.")
+                break
+            if isinstance(result, str) and result.startswith("ERROR"):
+                logging.error(f"DEBUG-UI: Thread-Fehler: {result[6:]}")
+                self.status_text.value = f"Fehler: {result[6:]}"
+                self.display()
+                break
+                
+            # Ergebnis verarbeiten
+            i, title, exists, is_valid = result
+            episodes_checked += 1
+            
+            if not is_valid:
+                # Ungültiges Ergebnis, Episode als nicht vorhanden markieren
+                if not title.startswith("[✗] "):
+                    original_title = title[4:] if title.startswith("[✓] ") else title
+                    new_values.append(f"[✗] {original_title}")
+                else:
+                    new_values.append(title)
+                continue
+            
+            # Je nach Vorhandensein markieren
+            if exists:
+                self.existing_episodes.append(i)
+                episodes_found += 1
+                if not title.startswith("[✓] "):
+                    original_title = title[4:] if title.startswith("[✗] ") else title
+                    new_values.append(f"[✓] {original_title}")
+                else:
+                    new_values.append(title)
+            else:
+                if not title.startswith("[✗] "):
+                    original_title = title[4:] if title.startswith("[✓] ") else title
+                    new_values.append(f"[✗] {original_title}")
+                else:
+                    new_values.append(title)
+                    
+            # UI aktualisieren für Fortschrittsanzeige
+            if len(new_values) % 5 == 0 or len(new_values) == len(self.episode_selector.values):
+                self.status_text.value = f"Suche nach vorhandenen Episoden... ({len(new_values)}/{len(self.episode_selector.values)})"
+                self.display()
+        
+        # Warte auf Thread-Ende
+        scan_thread.join(timeout=1.0)
+        
+        # Stelle sicher, dass alle Episoden markiert wurden
+        while len(new_values) < len(self.episode_selector.values):
+            title = self.episode_selector.values[len(new_values)]
+            if not title.startswith("[✗] "):
+                original_title = title[4:] if title.startswith("[✓] ") else title
+                new_values.append(f"[✗] {original_title}")
+            else:
+                new_values.append(title)
+        
+        # Aktualisiere die Anzeige
+        logging.info(f"DEBUG-UI: Aktualisiere UI mit {len(new_values)} Episoden, davon {episodes_found} gefunden")
+        self.episode_selector.values = new_values
+        self.episode_selector.display()
+        
+        # Status-Nachricht aktualisieren
+        self.status_text.value = f"{episodes_found} von {len(new_values)} Episoden wurden bereits heruntergeladen."
+        self.display()
+
+    def show_only_missing_episodes(self):
+        """Filtert die Liste, um nur fehlende Episoden anzuzeigen"""
+        if not hasattr(self, 'existing_episodes'):
+            self.mark_existing_episodes()
+            
+        # Alle Indizes, die nicht in existing_episodes sind
+        missing_indices = [i for i in range(len(self.episode_selector.values)) 
+                         if i not in self.existing_episodes]
+        
+        # Nur fehlende Episoden auswählen
+        self.episode_selector.value = missing_indices
+        self.episode_selector.display()
+        
+        # Status-Nachricht aktualisieren
+        self.status_text.value = f"{len(missing_indices)} fehlende Episoden werden angezeigt."
+        self.display()
+    
+    def select_all_missing_episodes(self):
+        """Wählt alle fehlenden Episoden aus"""
+        if not hasattr(self, 'existing_episodes'):
+            self.mark_existing_episodes()
+            
+        # Alle Indizes, die nicht in existing_episodes sind
+        missing_indices = [i for i in range(len(self.episode_selector.values)) 
+                         if i not in self.existing_episodes]
+        
+        # Alle fehlenden Episoden auswählen
+        self.episode_selector.value = missing_indices
+        self.episode_selector.display()
+        
+        # Status-Nachricht aktualisieren
+        self.status_text.value = f"{len(missing_indices)} fehlende Episoden wurden ausgewählt."
+        self.display()
 
 
 # pylint: disable=R0901
@@ -823,6 +1140,71 @@ def get_anime_title(args):
 
 
 def main():
+    # Globale Variablen
+    global DEFAULT_PROVIDER
+    global DEFAULT_LANGUAGE
+    global DEFAULT_DOWNLOAD_PATH
+    global DEFAULT_PROVIDER_WATCH
+
+    # Setze Zeitlimit für Anfragen
+    socket.setdefaulttimeout(30)
+
+    # Installiere Log-Handler
+    log_handler = colorlog.StreamHandler()
+    log_handler.setFormatter(colorlog.ColoredFormatter(
+        '%(log_color)s%(levelname)s:%(message)s',
+        log_colors=aniworld_globals.log_colors))
+
+    # Logging konfigurieren
+    if aniworld_globals.IS_DEBUG_MODE:
+        file_handler = aniworld_globals.setup_file_handler()
+        logger = logging.getLogger()
+        logger.setLevel(logging.DEBUG)
+        logger.addHandler(file_handler)
+        logger.addHandler(log_handler)
+        # Warnung über Debug-Modus anzeigen
+        logging.warning("DEBUG-Modus ist aktiviert! Logs werden in %s gespeichert.", aniworld_globals.LOG_FILE_PATH)
+    else:
+        logging.basicConfig(level=logging.INFO, handlers=[log_handler])
+
+    logging.getLogger('requests').setLevel(logging.WARNING)
+    
+    # Initialisiere die Episoden-Datenbank und starte eine Hintergrund-Indizierung
+    try:
+        from aniworld.common.db import get_db
+        db = get_db()
+        
+        # Überprüfe, ob ein Download-Pfad konfiguriert ist
+        download_path = aniworld_globals.DEFAULT_DOWNLOAD_PATH
+        if download_path and os.path.exists(download_path):
+            # Starte einen Thread für die Hintergrund-Indizierung mit einer neuen Funktion,
+            # damit die Hauptanwendung nicht blockiert wird
+            def run_background_indexing():
+                try:
+                    import time
+                    # Warte kurz, damit die Hauptanwendung starten kann
+                    time.sleep(1)
+                    # Direkter Print zur Konsole statt Logging (erscheint vor der UI)
+                    print(f"[INFO] Starte Hintergrund-Indexierung des Download-Ordners: {download_path}")
+                    from aniworld.common.db import get_db
+                    background_db = get_db()  # Eine eigene Instanz für diesen Thread
+                    background_db.scan_directory(download_path)
+                    print("[INFO] Hintergrund-Indexierung abgeschlossen")
+                except Exception as e:
+                    print(f"[ERROR] Fehler bei der Hintergrund-Indexierung: {e}")
+            
+            # Starte den Thread
+            threading.Thread(
+                target=run_background_indexing, 
+                daemon=True,
+                name="DB-Indexer"
+            ).start()
+            logging.info(f"Hintergrund-Indexierung des Download-Ordners gestartet: {download_path}")
+        else:
+            logging.info("Kein gültiger Download-Pfad konfiguriert, Indexierung wird übersprungen")
+    except Exception as e:
+        logging.warning(f"Episoden-Datenbank konnte nicht initialisiert werden: {e}")
+        
     logging.debug("============================================")
     logging.debug("Welcome to Aniworld!")
     logging.debug("============================================\n")
@@ -833,6 +1215,8 @@ def main():
         adventure()
 
         sys.exit()
+
+    # Argumente parsen
     try:
         args = parse_arguments()
         logging.debug("Parsed arguments: %s", args)

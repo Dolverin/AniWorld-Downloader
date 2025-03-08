@@ -6,6 +6,7 @@ import sys
 
 import colorlog
 
+# Debug-Modus wieder auf Umgebungsvariable setzen
 IS_DEBUG_MODE = os.getenv('IS_DEBUG_MODE', 'False').lower() in ('true', '1', 't', 'y', 'yes')
 LOG_FILE_PATH = os.path.join(tempfile.gettempdir(), 'aniworld.log')
 
@@ -20,7 +21,7 @@ DEFAULT_ONLY_DIRECT_LINK = False
 DEFAULT_ONLY_COMMAND = False
 DEFAULT_PROXY = None
 DEFAULT_USE_PLAYWRIGHT = False
-DEFAULT_TERMINAL_SIZE = (90, 32)
+DEFAULT_TERMINAL_SIZE = (90, 38)
 
 # Priorisierte Liste der Provider gemäß Empfehlung:
 # VOE > Vidoza > Streamtape > andere

@@ -1726,5 +1726,184 @@ def install_and_import(package):
         globals()[package] = __import__(package)
 
 
+def check_if_episode_exists(anime_title, season, episode, language, download_path):
+    """
+    Prüft, ob eine Episode bereits im Download-Verzeichnis existiert.
+    Nutzt zunächst den Datenbankindex für eine schnelle Suche, und führt
+    nur wenn nötig eine vollständige Dateisystemsuche durch.
+    
+    Args:
+        anime_title (str): Der Titel des Animes
+        season (int): Staffelnummer
+        episode (int): Episodennummer
+        language (str): Sprachversion (German Dub, English Sub, German Sub)
+        download_path (str): Der Basis-Downloadpfad
+        
+    Returns:
+        bool: True, wenn die Episode existiert, sonst False
+    """
+    logging.info(f"DEBUG-CHECK: Prüfe Existenz von {anime_title} S{season}E{episode} ({language}) in {download_path}")
+    
+    try:
+        # Importiere die Datenbankfunktionalität lokal, um zirkuläre Importe zu vermeiden
+        from aniworld.common.db import get_db
+        
+        # Hole eine Instanz der Datenbank
+        db = get_db()
+        
+        # Wenn gerade eine Indizierung läuft, stattdessen die Dateisystem-Suche verwenden
+        if db.is_currently_indexing():
+            logging.debug("DEBUG-CHECK: Datenbankindizierung läuft, verwende Dateisystemsuche")
+            return _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path)
+        
+        # Überprüfe zunächst, ob wir die Episode in der Datenbank finden können
+        logging.debug(f"DEBUG-CHECK: Suche in Datenbank nach {anime_title} S{season}E{episode}")
+        if db.episode_exists(anime_title, season, episode, language):
+            logging.debug(f"DEBUG-CHECK: Episode {anime_title} S{season}E{episode} ({language}) in Datenbank gefunden")
+            return True
+            
+        # Wenn nicht in der Datenbank, aktualisiere den Index für diesen Ordner
+        logging.debug(f"DEBUG-CHECK: Episode nicht im Index gefunden, durchsuche Dateisystem in {download_path}")
+        
+        # Pfad zum Ordner der Serie
+        sanitized_title = sanitize_path(anime_title)
+        series_path = os.path.join(download_path, sanitized_title)
+        
+        # Prüfen, ob Indizierung gerade läuft
+        if db.is_currently_indexing():
+            logging.debug("DEBUG-CHECK: Datenbankindizierung läuft bereits, verwende Dateisystemsuche")
+            return _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path)
+        
+        # Indiziere Verzeichnisse (nur wenn nötig)
+        new_files = 0
+        if os.path.exists(series_path):
+            logging.debug(f"DEBUG-CHECK: Indiziere Serienordner {series_path}")
+            new_files += db.scan_directory(series_path, force_rescan=False)
+        
+        # Wenn wir keine neuen Dateien im Serienordner gefunden haben, 
+        # überprüfe auch den allgemeinen Download-Ordner
+        if new_files == 0:
+            logging.debug(f"DEBUG-CHECK: Keine Dateien im Serienordner gefunden, indiziere auch {download_path}")
+            db.scan_directory(download_path, force_rescan=False)
+        
+        # Versuche erneut, die Episode zu finden
+        logging.debug(f"DEBUG-CHECK: Wiederhole Datenbanksuche nach Indizierung")
+        if db.episode_exists(anime_title, season, episode, language):
+            logging.debug(f"DEBUG-CHECK: Episode {anime_title} S{season}E{episode} ({language}) nach Indizierung gefunden")
+            return True
+                
+        logging.debug(f"DEBUG-CHECK: Episode {anime_title} S{season}E{episode} ({language}) wurde nicht gefunden")
+        return False
+        
+    except ImportError as e:
+        # Fallback zur alten Methode, wenn die DB nicht verfügbar ist
+        logging.warning(f"DEBUG-CHECK: Datenbankindex nicht verfügbar: {e}, verwende Dateisystemsuche...")
+        return _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path)
+    except Exception as e:
+        # Bei Datenbankproblemen zur alten Methode zurückfallen
+        logging.error(f"DEBUG-CHECK: Fehler bei der Datenbanksuche: {e}, verwende Dateisystemsuche...")
+        return _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path)
+
+
+def _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path):
+    """
+    Prüft mit der alten Methode über das Dateisystem, ob eine Episode existiert.
+    Wird als Fallback verwendet, wenn die Datenbanksuche nicht funktioniert.
+    
+    Args:
+        anime_title (str): Der Titel des Animes
+        season (int): Staffelnummer
+        episode (int): Episodennummer
+        language (str): Sprachversion (German Dub, English Sub, German Sub)
+        download_path (str): Der Basis-Downloadpfad
+        
+    Returns:
+        bool: True, wenn die Episode existiert, sonst False
+    """
+    sanitized_title = sanitize_path(anime_title)
+    
+    # Formatierte Staffel- und Episodennummern wie im Download-Code
+    season_str = ""
+    if season:
+        if season < 10:
+            season_str = "00" + str(season)
+        elif 10 <= season < 100:
+            season_str = "0" + str(season)
+        else:
+            season_str = str(season)
+    
+    episode_str = ""
+    if episode < 10:
+        episode_str = "00" + str(episode)
+    elif 10 <= episode < 100:
+        episode_str = "0" + str(episode)
+    else:
+        episode_str = str(episode)
+    
+    # Erzeuge verschiedene Namensmuster, die mit dem Dateinamen übereinstimmen könnten
+    patterns = []
+    
+    # Standard-Muster (genau wie im Download-Code)
+    if season:
+        patterns.append(f"{sanitized_title} - S{season_str}E{episode_str} \\({language}\\).*")
+    else:
+        patterns.append(f"{sanitized_title} - Movie {episode_str} \\({language}\\).*")
+        
+    # Alternative Muster mit verschiedenen Formatierungen
+    # Muster ohne führende Nullen
+    if season:
+        patterns.append(f"{sanitized_title} - S{int(season)}E{int(episode)} \\({language}\\).*")
+    
+    # Muster mit "Episode" ausgeschrieben
+    if season:
+        patterns.append(f"{sanitized_title}.*[Ss]{season_str}.*[Ee]{episode_str}.*{language}.*")
+        patterns.append(f"{sanitized_title}.*[Ss]{int(season)}.*[Ee]{int(episode)}.*{language}.*")
+        patterns.append(f"{sanitized_title}.*[Ss]taffel[ ._-]{season_str}.*[Ee]pisode[ ._-]{episode_str}.*{language}.*")
+        patterns.append(f"{sanitized_title}.*[Ss]taffel[ ._-]{int(season)}.*[Ee]pisode[ ._-]{int(episode)}.*{language}.*")
+        patterns.append(f"{sanitized_title}.*[Ss]eason[ ._-]{season_str}.*[Ee]pisode[ ._-]{episode_str}.*{language}.*")
+        patterns.append(f"{sanitized_title}.*[Ss]eason[ ._-]{int(season)}.*[Ee]pisode[ ._-]{int(episode)}.*{language}.*")
+    
+    # Muster für verschiedene Sprachen (falls die Sprache anders geschrieben wurde)
+    for lang_variant in [language, language.replace(" ", "."), language.replace(" ", "_"), language.replace(" ", "-")]:
+        if season:
+            patterns.append(f"{sanitized_title} - S{season_str}E{episode_str} \\({lang_variant}\\).*")
+        else:
+            patterns.append(f"{sanitized_title} - Movie {episode_str} \\({lang_variant}\\).*")
+    
+    # Einfache Suchmuster, das nur nach Staffel und Episode sucht (für beliebige Dateiformate)
+    if season:
+        patterns.append(f".*[Ss]{season_str}[Ee]{episode_str}.*")
+        patterns.append(f".*[Ss]{int(season)}[Ee]{int(episode)}.*")
+    else:
+        patterns.append(f".*[Mm]ovie[ ._-]{episode_str}.*")
+        patterns.append(f".*[Mm]ovie[ ._-]{int(episode)}.*")
+    
+    logging.debug(f"Suche nach folgenden Mustern:")
+    for pattern in patterns:
+        logging.debug(f"  - {pattern}")
+    
+    # Pfad zum Ordner der Serie
+    search_path = os.path.join(download_path, sanitized_title)
+    
+    # Prüfen, ob der Serienordner existiert
+    if not os.path.exists(search_path):
+        logging.debug(f"Ordner {search_path} existiert nicht, durchsuche den allgemeinen Download-Ordner")
+        search_path = download_path
+    
+    logging.debug(f"Durchsuche {search_path} und alle Unterordner rekursiv")
+    
+    # Rekursive Suche im Hauptordner und allen Unterordnern
+    for root, dirs, files in os.walk(search_path):
+        logging.debug(f"Durchsuche Verzeichnis: {root} mit {len(files)} Dateien und {len(dirs)} Unterordnern")
+        for file in files:
+            for pattern in patterns:
+                if re.search(pattern, file, re.IGNORECASE):
+                    logging.debug(f"Datei gefunden: {os.path.join(root, file)} mit Muster {pattern}")
+                    return True
+    
+    logging.debug(f"Keine passende Datei gefunden")
+    return False
+
+
 if __name__ == "__main__":
     pass
