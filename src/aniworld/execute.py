@@ -4,6 +4,7 @@ import getpass
 import platform
 import hashlib
 import logging
+import time
 from typing import Dict, List, Optional, Any
 
 from bs4 import BeautifulSoup
@@ -413,11 +414,57 @@ def handle_download_action(params: Dict[str, Any]) -> None:
             print_progress_info(msg)
     command = build_yt_dlp_command(params['link'], file_path, params['provider'])
     logging.debug("Executing command: %s", command)
+    
+    # Variablen für Download-Statistiken
+    download_start_time = time.time()
+    download_status = "completed"
+    download_speed = None
+    file_size = None
+    download_duration = None
+    
     try:
         execute_command(command, params['only_command'])
+        
+        # Download erfolgreich abgeschlossen, Statistiken erfassen
+        download_end_time = time.time()
+        download_duration = download_end_time - download_start_time
+        
+        # Dateigröße ermitteln, falls die Datei existiert
+        if os.path.exists(file_path):
+            file_size = os.path.getsize(file_path)
+            # Durchschnittsgeschwindigkeit berechnen (Bytes/Sekunde)
+            if download_duration > 0:
+                download_speed = file_size / download_duration
+        
     except KeyboardInterrupt:
         logging.debug("KeyboardInterrupt encountered, cleaning up leftovers")
         clean_up_leftovers(os.path.dirname(file_path))
+        download_status = "cancelled"
+    except Exception as e:
+        logging.error(f"Download-Fehler: {e}")
+        download_status = "failed"
+    finally:
+        # Download-Statistiken in der Datenbank speichern
+        try:
+            from aniworld.common.db import get_db
+            db = get_db()
+            
+            # Original-Staffel- und Episodennummern für die DB verwenden
+            db.save_download_stats(
+                anime_title=params['anime_title'],
+                season=params['season_number'],
+                episode=params['episode_number'],
+                language=get_language_from_key(int(params['language'])),
+                provider=params['provider'],
+                download_speed=download_speed,
+                file_size=file_size,
+                download_duration=download_duration,
+                status=download_status
+            )
+            logging.debug(f"Download-Statistik erfasst: Status={download_status}, Dauer={download_duration:.2f}s, Größe={file_size or 'unbekannt'}")
+        except Exception as e:
+            logging.error(f"Fehler beim Speichern der Download-Statistik: {e}")
+    
     logging.debug("yt-dlp has finished.\nBye bye!")
     if not platform.system() == "Windows":
         print(f"Downloaded to '{file_path}'")

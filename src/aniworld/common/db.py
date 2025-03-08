@@ -156,6 +156,27 @@ class EpisodeDatabase:
                 )
             ''')
             
+            # Neue Tabelle für Download-Statistiken
+            self.db.execute('''
+                CREATE TABLE IF NOT EXISTS download_stats (
+                    id INTEGER PRIMARY KEY,
+                    episode_id INTEGER,
+                    download_date INTEGER NOT NULL,
+                    provider TEXT NOT NULL,
+                    download_speed REAL,
+                    file_size INTEGER,
+                    download_duration INTEGER,
+                    status TEXT NOT NULL,
+                    FOREIGN KEY (episode_id) REFERENCES episode_files (id)
+                )
+            ''')
+            
+            # Index für schnellere Abfragen der Download-Statistiken
+            self.db.execute('''
+                CREATE INDEX IF NOT EXISTS idx_download_stats_episode ON download_stats 
+                (episode_id)
+            ''')
+            
             self.db.commit()
             logging.debug("Datenbanktabellen wurden initialisiert")
         except sqlite3.Error as e:
@@ -604,6 +625,116 @@ class EpisodeDatabase:
             logging.info("Datenbankwartung abgeschlossen")
         except sqlite3.Error as e:
             logging.error(f"Fehler bei der Datenbankwartung: {e}")
+
+    def save_download_stats(self, 
+                          episode_id=None, 
+                          anime_title=None, 
+                          season=None, 
+                          episode=None, 
+                          language=None,
+                          provider=None, 
+                          download_speed=None, 
+                          file_size=None, 
+                          download_duration=None, 
+                          status="completed"):
+        """
+        Speichert Informationen über einen Download in der Datenbank.
+        
+        Args:
+            episode_id: ID der Episode in der Datenbank (wenn bekannt)
+            anime_title: Titel des Animes (falls episode_id nicht bekannt)
+            season: Staffelnummer (falls episode_id nicht bekannt)
+            episode: Episodennummer (falls episode_id nicht bekannt)
+            language: Sprache der Episode (falls episode_id nicht bekannt)
+            provider: Name des Providers, von dem heruntergeladen wurde
+            download_speed: Durchschnittliche Download-Geschwindigkeit in Bytes/Sekunde
+            file_size: Größe der Datei in Bytes
+            download_duration: Dauer des Downloads in Sekunden
+            status: Status des Downloads (completed, failed, cancelled)
+            
+        Returns:
+            ID des erstellten Datensatzes oder None bei Fehler
+        """
+        try:
+            # Aktuelle Zeit als UNIX-Timestamp
+            current_time = int(time.time())
+            
+            # Falls keine episode_id angegeben, versuche die Episode zu finden
+            if not episode_id and anime_title and season is not None and episode is not None:
+                episode_data = self.get_episode_file(anime_title, season, episode, language)
+                if episode_data:
+                    episode_id = episode_data['id']
+            
+            # Speichere die Download-Statistik
+            cursor = self.db.execute('''
+                INSERT INTO download_stats 
+                (episode_id, download_date, provider, download_speed, file_size, download_duration, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                episode_id, 
+                current_time, 
+                provider or "unknown",
+                download_speed,
+                file_size,
+                download_duration,
+                status
+            ))
+            
+            self.db.commit()
+            logging.debug(f"Download-Statistik gespeichert: Provider={provider}, Status={status}")
+            return cursor.lastrowid
+        except Exception as e:
+            logging.error(f"Fehler beim Speichern der Download-Statistik: {e}")
+            return None
+            
+    def get_download_stats(self, anime_title=None, provider=None, days=None):
+        """
+        Gibt Download-Statistiken zurück, gefiltert nach verschiedenen Kriterien.
+        
+        Args:
+            anime_title: Filtert nach Anime-Titel
+            provider: Filtert nach Provider
+            days: Gibt nur Statistiken der letzten X Tage zurück
+            
+        Returns:
+            Liste mit Download-Statistiken
+        """
+        try:
+            query = """
+                SELECT ds.*, ef.title, ef.season, ef.episode, ef.language, ef.file_path 
+                FROM download_stats ds
+                LEFT JOIN episode_files ef ON ds.episode_id = ef.id
+                WHERE 1=1
+            """
+            params = []
+            
+            if anime_title:
+                query += " AND ef.title LIKE ? "
+                params.append(f"%{anime_title}%")
+                
+            if provider:
+                query += " AND ds.provider = ? "
+                params.append(provider)
+                
+            if days:
+                min_time = int(time.time()) - (days * 86400)
+                query += " AND ds.download_date >= ? "
+                params.append(min_time)
+                
+            query += " ORDER BY ds.download_date DESC"
+            
+            cursor = self.db.execute(query, params)
+            results = []
+            for row in cursor.fetchall():
+                # Konvertiere das Row-Objekt in ein Dictionary
+                result = {}
+                for key in row.keys():
+                    result[key] = row[key]
+                results.append(result)
+            return results
+        except Exception as e:
+            logging.error(f"Fehler beim Abrufen der Download-Statistiken: {e}")
+            return []
 
 
 # Globale Instanz für den einfachen Zugriff
