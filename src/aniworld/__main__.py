@@ -893,26 +893,84 @@ def execute_with_params(args, selected_episodes, anime_title, language, anime_sl
 
 
 def run_app_with_query(args):
-    def run_app(query):
-        logging.debug("Running app with query: %s", query)
-        clear_screen()
-        app = AnimeApp(query)
-        app.run()
-
-    try:
+    """Run the application with a query, slug, or link."""
+    # Prüfe, ob wir in einer SSH-Sitzung sind
+    is_ssh = os.environ.get('SSH_CLIENT') or os.environ.get('SSH_TTY')
+    
+    if is_ssh and args.slug:
+        logging.info("SSH-Sitzung erkannt, verwende direkte Parameterverarbeitung ohne TUI")
+        direct_execute_with_params(args)
+    else:
         try:
-            logging.debug("Trying to resize Terminal.")
-            set_terminal_size()
-            run_app(search_anime(slug=args.slug, link=args.link))
-        except npyscreen.wgwidget.NotEnoughSpaceForWidget:
-            logging.debug("Not enough space for widget. Asking user to resize terminal.")
-            clear_screen()
-            print("Please increase your current terminal size.")
-            logging.debug("Exiting due to terminal size.")
+            try:
+                logging.debug("Trying to resize Terminal.")
+                set_terminal_size()
+                run_app(search_anime(slug=args.slug, link=args.link))
+            except npyscreen.wgwidget.NotEnoughSpaceForWidget:
+                logging.debug("Not enough space for widget. Asking user to resize terminal.")
+                clear_screen()
+                print("Please increase your current terminal size.")
+                logging.debug("Exiting due to terminal size.")
+                sys.exit()
+        except KeyboardInterrupt:
+            logging.debug("KeyboardInterrupt encountered. Exiting.")
             sys.exit()
-    except KeyboardInterrupt:
-        logging.debug("KeyboardInterrupt encountered. Exiting.")
-        sys.exit()
+
+
+def run_app(query):
+    logging.debug("Running app with query: %s", query)
+    clear_screen()
+    app = AnimeApp(query)
+    app.run()
+
+
+def direct_execute_with_params(args):
+    """Führt die Aktion direkt aus, ohne das TUI zu verwenden."""
+    try:
+        anime_slug = search_anime(slug=args.slug, link=args.link)
+        if not anime_slug:
+            print(f"Konnte keine Anime-Informationen für den Slug '{args.slug}' finden.")
+            return
+            
+        # Anime-Titel aus dem Slug ableiten (vereinfachte Version)
+        anime_title = anime_slug.replace('-', ' ').title()
+        
+        language = get_language_code(args.language) if args.language else 1  # Default: German Dub
+        
+        # Wenn args.episode numerische Werte enthält, konvertieren wir sie in URLs
+        if args.episode:
+            try:
+                # Prüfen, ob die Episoden numerisch sind
+                episode_numbers = []
+                for ep in args.episode:
+                    try:
+                        # Versuche, die Episode als Zahl zu interpretieren
+                        episode_numbers.append(int(ep))
+                    except ValueError:
+                        # Wenn es keine Zahl ist, behandle es als URL
+                        episode_numbers.append(ep)
+                
+                # Wenn wir numerische Episoden haben, konvertieren wir sie in URLs
+                if all(isinstance(ep, int) for ep in episode_numbers):
+                    logging.debug("Konvertiere Episodennummern in URLs")
+                    # Erstelle URLs für die Episoden
+                    base_url = f"https://aniworld.to/anime/stream/{anime_slug}/staffel-1/episode-"
+                    selected_episodes = [f"{base_url}{ep}" for ep in episode_numbers]
+                else:
+                    # Wenn es bereits URLs sind, verwende sie direkt
+                    selected_episodes = args.episode
+            except Exception as e:
+                logging.error("Fehler beim Konvertieren der Episodennummern: %s", str(e))
+                selected_episodes = args.episode
+        else:
+            print("Keine Episode angegeben. Verwende Episode 1.")
+            base_url = f"https://aniworld.to/anime/stream/{anime_slug}/staffel-1/episode-"
+            selected_episodes = [f"{base_url}1"]
+            
+        execute_with_params(args, selected_episodes, anime_title, language, anime_slug)
+    except Exception as e:
+        logging.error("Fehler bei der direkten Ausführung: %s", str(e))
+        print(f"Ein Fehler ist aufgetreten: {str(e)}")
 
 
 if __name__ == "__main__":
