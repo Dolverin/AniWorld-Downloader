@@ -20,7 +20,7 @@ DEFAULT_ONLY_DIRECT_LINK = False
 DEFAULT_ONLY_COMMAND = False
 DEFAULT_PROXY = None
 DEFAULT_USE_PLAYWRIGHT = False
-DEFAULT_TERMINAL_SIZE = (90, 32)
+DEFAULT_TERMINAL_SIZE = (90, 38)
 
 # Priorisierte Liste der Provider gemäß Empfehlung:
 # VOE > Vidoza > Streamtape > andere

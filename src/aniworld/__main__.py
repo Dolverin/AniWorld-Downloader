@@ -40,7 +40,8 @@ from aniworld.common import (
     check_internet_connection,
     adventure,
     get_description,
-    get_description_with_id
+    get_description_with_id,
+    check_if_episode_exists
 )
 from aniworld.extractors import (
     nhentai,
@@ -106,6 +107,10 @@ class EpisodeForm(npyscreen.ActionForm):
         self.setup_signal_handling()
 
         anime_season_title = get_anime_season_title(slug=anime_slug, season=1)
+        self.anime_title = anime_season_title
+        
+        # Speichern der Anime-Information für spätere Verwendung
+        self.anime_slug = anime_slug
 
         def process_url(url):
             logging.debug("Processing URL: %s", url)
@@ -140,6 +145,11 @@ class EpisodeForm(npyscreen.ActionForm):
             if season not in self.seasons_map:
                 self.seasons_map[season] = []
             self.seasons_map[season].append((episode, title))
+            
+        # Speichern der Original-Infos für jede Episode (Staffel, Episode)
+        self.episode_info = {}
+        for season, episode, title, url in sorted_results:
+            self.episode_info[title] = (season, episode)
 
         season_episode_map = {title: url for _, _, title, url in sorted_results}
         self.episode_map = season_episode_map
@@ -212,18 +222,23 @@ class EpisodeForm(npyscreen.ActionForm):
         )
 
         logging.debug("Provider selector created")
+        
+        # Status-Text für Benachrichtigungen hinzufügen
+        self.status_text = self.add(
+            npyscreen.TitleFixedText,
+            name="Status:",
+            value="",
+            editable=False
+        )
 
-        self.add(npyscreen.FixedText, value="", editable=False)
         self.episode_selector = self.add(
             npyscreen.TitleMultiSelect,
             name="Episode Selection",
             values=episode_list,
-            max_height=7,
+            max_height=6,
             scroll_exit=True
         )
         logging.debug("Episode selector created")
-
-        self.add(npyscreen.FixedText, value="")
         
         # Dropdown für Staffelauswahl
         self.season_selector = self.add(
@@ -231,6 +246,33 @@ class EpisodeForm(npyscreen.ActionForm):
             name="Staffel auswählen:",
             values=["Staffel " + str(season) if season > 0 else "Filme" for season in sorted(self.seasons_map.keys())],
             max_height=4,
+            scroll_exit=True
+        )
+        
+        # Button zum Markieren vorhandener Episoden
+        self.mark_existing_button = self.add(
+            npyscreen.ButtonPress,
+            name="Vorhandene Episoden markieren",
+            max_height=1,
+            when_pressed_function=self.mark_existing_episodes,
+            scroll_exit=True
+        )
+        
+        # Button zum Filtern und Anzeigen nur fehlender Episoden
+        self.filter_missing_button = self.add(
+            npyscreen.ButtonPress,
+            name="Nur fehlende Episoden anzeigen",
+            max_height=1,
+            when_pressed_function=self.show_only_missing_episodes,
+            scroll_exit=True
+        )
+        
+        # Button zum Auswählen aller fehlenden Episoden
+        self.select_missing_button = self.add(
+            npyscreen.ButtonPress,
+            name="Alle fehlenden Episoden auswählen",
+            max_height=1,
+            when_pressed_function=self.select_all_missing_episodes,
             scroll_exit=True
         )
         
@@ -253,6 +295,9 @@ class EpisodeForm(npyscreen.ActionForm):
         )
 
         self.display_text = False
+        
+        # Automatisch nach vorhandenen Episoden suchen
+        threading.Timer(0.5, self.mark_existing_episodes).start()
 
         self.toggle_button = self.add(
             npyscreen.ButtonPress,
@@ -314,7 +359,8 @@ class EpisodeForm(npyscreen.ActionForm):
         logging.debug("Output directory: %s", output_directory)
         if not output_directory and not self.directory_field.hidden:
             logging.debug("No output directory provided")
-            npyscreen.notify_confirm("Please provide a directory.", title="Error")
+            self.status_text.value = "Bitte geben Sie ein Verzeichnis an."
+            self.display()
             return
 
         selected_episodes = self.episode_selector.get_selected_objects()
@@ -331,18 +377,66 @@ class EpisodeForm(npyscreen.ActionForm):
 
         if not (selected_episodes and action_selected and language_selected):
             logging.debug("No episodes or action or language selected")
-            npyscreen.notify_confirm("No episodes selected.", title="Selection")
+            self.status_text.value = "Keine Episoden ausgewählt."
+            self.display()
             return
+            
+        # Die markierten Episoden entfernen und Original-Titel wiederherstellen
+        cleaned_selected_episodes = []
+        for episode in selected_episodes:
+            if episode.startswith("[✓] ") or episode.startswith("[✗] "):
+                # Titel ohne Markierung
+                cleaned_episode = episode[4:]
+                cleaned_selected_episodes.append(cleaned_episode)
+            else:
+                cleaned_selected_episodes.append(episode)
+        
+        # Überprüfen, ob der Benutzer bereits heruntergeladene Episoden erneut herunterladen möchte
+        existing_episodes_selected = []
+        for episode in selected_episodes:
+            if episode.startswith("[✓] "):
+                existing_episodes_selected.append(episode)
+        
+        if existing_episodes_selected and action_selected[0] == "Download":
+            # Bestätigung vom Benutzer einholen
+            confirm = npyscreen.notify_yes_no(
+                f"Sie haben {len(existing_episodes_selected)} bereits heruntergeladene Episoden ausgewählt. "
+                "Möchten Sie diese erneut herunterladen?",
+                title="Bestätigung erforderlich"
+            )
+            
+            if not confirm:
+                # Wenn der Benutzer 'Nein' wählt, die bereits heruntergeladenen Episoden aus der Auswahl entfernen
+                cleaned_selected_episodes = [
+                    episode for episode in cleaned_selected_episodes 
+                    if episode not in [e[4:] for e in existing_episodes_selected]
+                ]
+                
+                if not cleaned_selected_episodes:
+                    self.status_text.value = "Keine neuen Episoden zum Herunterladen ausgewählt."
+                    self.display()
+                    return
 
         lang = self.get_language_code(language_selected[0])
         logging.debug("Language code: %s", lang)
         provider_selected = self.validate_provider(provider_selected)
         logging.debug("Validated provider: %s", provider_selected)
 
-        selected_urls = [self.episode_map[episode] for episode in selected_episodes]
-        selected_str = "\n".join(selected_episodes)
+        # Den bereinigten Titel verwenden, um die URLs zu finden
+        selected_urls = []
+        for episode in cleaned_selected_episodes:
+            if episode in self.episode_map:
+                selected_urls.append(self.episode_map[episode])
+            
+        selected_str = "\n".join(cleaned_selected_episodes)
         logging.debug("Selected URLs: %s", selected_urls)
-        npyscreen.notify_confirm(f"Selected episodes:\n{selected_str}", title="Selection")
+        
+        # Status-Nachricht: Ausgewählte Episoden
+        if len(cleaned_selected_episodes) <= 3:
+            self.status_text.value = f"Ausgewählte Episoden: {', '.join(cleaned_selected_episodes)}"
+        else:
+            self.status_text.value = f"{len(cleaned_selected_episodes)} Episoden ausgewählt"
+        self.display()
 
         if not self.directory_field.hidden:
             output_directory = os.path.join(output_directory)
@@ -406,6 +500,10 @@ class EpisodeForm(npyscreen.ActionForm):
         all_indices = list(range(len(self.episode_selector.values)))
         self.episode_selector.value = all_indices
         self.episode_selector.display()
+        
+        # Status-Nachricht aktualisieren
+        self.status_text.value = f"Alle {len(all_indices)} Episoden wurden ausgewählt."
+        self.display()
     
     def select_season_episodes(self):
         """Wählt alle Episoden der ausgewählten Staffel aus."""
@@ -419,13 +517,23 @@ class EpisodeForm(npyscreen.ActionForm):
         logging.debug("Selecting all episodes for season {}".format(selected_season))
         
         # Episodentitel für diese Staffel finden
-        season_episodes = [title for _, title in self.seasons_map[selected_season]]
+        season_episodes = []
+        for _, title in self.seasons_map[selected_season]:
+            season_episodes.append(title)
         
         # Indizes dieser Episoden in der episode_selector-Liste finden
         indices_to_select = []
         for i, title in enumerate(self.episode_selector.values):
-            if title in season_episodes:
-                indices_to_select.append(i)
+            # Titel bereinigen, falls er markiert ist
+            cleaned_title = title
+            if title.startswith("[✓] ") or title.startswith("[✗] "):
+                cleaned_title = title[4:]
+            
+            # Basistitel in der episode_info suchen
+            for original_title in season_episodes:
+                if original_title == cleaned_title or original_title + " ([✓])" == cleaned_title or original_title + " ([✗])" == cleaned_title:
+                    indices_to_select.append(i)
+                    break
         
         # Diese Episoden in der MultiSelect-Liste auswählen
         if self.episode_selector.value:
@@ -437,6 +545,99 @@ class EpisodeForm(npyscreen.ActionForm):
             self.episode_selector.value = indices_to_select
         
         self.episode_selector.display()
+        
+        # Status-Nachricht aktualisieren
+        season_name = "Staffel " + str(selected_season) if selected_season > 0 else "Filme"
+        self.status_text.value = f"{len(indices_to_select)} Episoden von {season_name} wurden ausgewählt."
+        self.display()
+
+    def mark_existing_episodes(self):
+        """Markiert bereits existierende Episoden in der Liste"""
+        download_path = self.directory_field.value or aniworld_globals.DEFAULT_DOWNLOAD_PATH
+        language = ["German Dub", "English Sub", "German Sub"][self.language_selector.value[0]]
+        
+        self.existing_episodes = []
+        new_values = []
+        
+        # Status-Nachricht aktualisieren
+        self.status_text.value = "Suche nach vorhandenen Episoden..."
+        self.display()
+        
+        for i, title in enumerate(self.episode_selector.values):
+            # Überprüfen, ob die Episode bereits existiert
+            if title.startswith("[✓] ") or title.startswith("[✗] "):
+                # Bereits markiert, Original-Titel extrahieren
+                original_title = title[4:]
+                season, episode = self.episode_info[original_title]
+            else:
+                # Nicht markiert, Staffel- und Episodennummer aus dem Titel extrahieren
+                season, episode = self.episode_info[title]
+            
+            # Episode im Dateisystem suchen
+            exists = check_if_episode_exists(
+                self.anime_title, 
+                season, 
+                episode, 
+                language, 
+                download_path
+            )
+            
+            # Je nach Vorhandensein markieren
+            if exists:
+                self.existing_episodes.append(i)
+                if not title.startswith("[✓] "):
+                    original_title = title[4:] if title.startswith("[✗] ") else title
+                    new_values.append(f"[✓] {original_title}")
+                else:
+                    new_values.append(title)
+            else:
+                if not title.startswith("[✗] "):
+                    original_title = title[4:] if title.startswith("[✓] ") else title
+                    new_values.append(f"[✗] {original_title}")
+                else:
+                    new_values.append(title)
+        
+        # Aktualisiere die Anzeige
+        self.episode_selector.values = new_values
+        self.episode_selector.display()
+        
+        # Status-Nachricht aktualisieren
+        self.status_text.value = f"{len(self.existing_episodes)} von {len(new_values)} Episoden wurden bereits heruntergeladen."
+        self.display()
+    
+    def show_only_missing_episodes(self):
+        """Filtert die Liste, um nur fehlende Episoden anzuzeigen"""
+        if not hasattr(self, 'existing_episodes'):
+            self.mark_existing_episodes()
+            
+        # Alle Indizes, die nicht in existing_episodes sind
+        missing_indices = [i for i in range(len(self.episode_selector.values)) 
+                         if i not in self.existing_episodes]
+        
+        # Nur fehlende Episoden auswählen
+        self.episode_selector.value = missing_indices
+        self.episode_selector.display()
+        
+        # Status-Nachricht aktualisieren
+        self.status_text.value = f"{len(missing_indices)} fehlende Episoden werden angezeigt."
+        self.display()
+    
+    def select_all_missing_episodes(self):
+        """Wählt alle fehlenden Episoden aus"""
+        if not hasattr(self, 'existing_episodes'):
+            self.mark_existing_episodes()
+            
+        # Alle Indizes, die nicht in existing_episodes sind
+        missing_indices = [i for i in range(len(self.episode_selector.values)) 
+                         if i not in self.existing_episodes]
+        
+        # Alle fehlenden Episoden auswählen
+        self.episode_selector.value = missing_indices
+        self.episode_selector.display()
+        
+        # Status-Nachricht aktualisieren
+        self.status_text.value = f"{len(missing_indices)} fehlende Episoden wurden ausgewählt."
+        self.display()
 
 
 # pylint: disable=R0901
