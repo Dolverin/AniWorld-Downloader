@@ -140,22 +140,38 @@ class EpisodeDatabase:
                         self.is_indexing = False
                         return 0
             
-            logging.info(f"Indexiere Episoden in {directory}")
+            logging.info(f"DEBUG-SCAN: Starte Indexierung von {directory}")
             
             # Aktuelle Dateien in der Datenbank für dieses Verzeichnis
-            self.cursor.execute(
-                "SELECT id, file_path, last_modified FROM episode_files WHERE file_path LIKE ?", 
-                (f"{directory}%",)
-            )
-            existing_files = {row['file_path']: (row['id'], row['last_modified']) for row in self.cursor.fetchall()}
+            try:
+                self.cursor.execute(
+                    "SELECT id, file_path, last_modified FROM episode_files WHERE file_path LIKE ?", 
+                    (f"{directory}%",)
+                )
+                existing_files = {row['file_path']: (row['id'], row['last_modified']) for row in self.cursor.fetchall()}
+                logging.debug(f"DEBUG-SCAN: {len(existing_files)} bereits indizierte Dateien gefunden")
+            except Exception as e:
+                logging.error(f"DEBUG-SCAN: Fehler beim Abfragen vorhandener Dateien: {e}")
+                existing_files = {}
             
             new_files_count = 0
             current_time = int(time.time())
             
             # Rekursiv alle Dateien im Verzeichnis durchsuchen
-            for root, _, files in os.walk(directory):
-                logging.debug(f"Durchsuche Verzeichnis: {root} mit {len(files)} Dateien")
-                for file in files:
+            try:
+                all_files = []
+                for root, dirs, files in os.walk(directory):
+                    logging.debug(f"DEBUG-SCAN: Durchsuche Verzeichnis: {root} mit {len(files)} Dateien")
+                    for file in files:
+                        all_files.append((root, file))
+                
+                logging.debug(f"DEBUG-SCAN: Insgesamt {len(all_files)} Dateien gefunden")
+                
+                # Verarbeite Dateien
+                for i, (root, file) in enumerate(all_files):
+                    if i % 100 == 0:
+                        logging.debug(f"DEBUG-SCAN: Verarbeite Datei {i}/{len(all_files)}")
+                        
                     file_path = os.path.join(root, file)
                     
                     try:
@@ -173,46 +189,71 @@ class EpisodeDatabase:
                             self.cursor.execute("DELETE FROM episode_files WHERE id = ?", (file_id,))
                         
                         # Versuche, Anime-Informationen aus dem Dateinamen zu extrahieren
+                        logging.debug(f"DEBUG-SCAN: Analysiere Dateiname: {file}")
                         extracted_info = self._parse_filename(file, file_path)
                         if extracted_info:
                             title, season, episode, language = extracted_info
+                            logging.debug(f"DEBUG-SCAN: Extrahierte Info: {title}, S{season}E{episode}, {language}")
                             
                             # Neuen Eintrag erstellen
-                            self.cursor.execute('''
-                                INSERT INTO episode_files 
-                                (title, season, episode, language, file_path, file_name, last_modified, indexed_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                            ''', (
-                                title, season, episode, language, file_path, file, 
-                                file_mtime, current_time
-                            ))
-                            
-                            new_files_count += 1
-                            if new_files_count % 100 == 0:
-                                logging.debug(f"Bereits {new_files_count} neue Dateien indexiert")
-                                self.conn.commit()  # Zwischenspeichern für große Verzeichnisse
+                            try:
+                                self.cursor.execute('''
+                                    INSERT INTO episode_files 
+                                    (title, season, episode, language, file_path, file_name, last_modified, indexed_at)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                ''', (
+                                    title, season, episode, language, file_path, file, 
+                                    file_mtime, current_time
+                                ))
+                                
+                                new_files_count += 1
+                                if new_files_count % 100 == 0:
+                                    logging.debug(f"DEBUG-SCAN: Bereits {new_files_count} neue Dateien indexiert")
+                                    self.conn.commit()  # Zwischenspeichern für große Verzeichnisse
+                            except sqlite3.Error as e:
+                                logging.error(f"DEBUG-SCAN: Datenbankfehler beim Einfügen von {file_path}: {e}")
+                        else:
+                            logging.debug(f"DEBUG-SCAN: Keine Anime-Info gefunden in: {file}")
                     
                     except (OSError, sqlite3.Error) as e:
-                        logging.error(f"Fehler beim Verarbeiten von {file_path}: {e}")
+                        logging.error(f"DEBUG-SCAN: Fehler beim Verarbeiten von {file_path}: {e}")
+            except Exception as e:
+                logging.error(f"DEBUG-SCAN: Unerwarteter Fehler beim Verarbeiten des Verzeichnisses: {e}")
             
             # Lösche Einträge für Dateien, die nicht mehr existieren
-            for file_path in existing_files:
-                if not os.path.exists(file_path):
-                    self.cursor.execute("DELETE FROM episode_files WHERE file_path = ?", (file_path,))
+            try:
+                deleted_count = 0
+                for file_path in existing_files:
+                    if not os.path.exists(file_path):
+                        self.cursor.execute("DELETE FROM episode_files WHERE file_path = ?", (file_path,))
+                        deleted_count += 1
+                
+                logging.debug(f"DEBUG-SCAN: {deleted_count} nicht mehr existierende Dateien aus dem Index entfernt")
+            except Exception as e:
+                logging.error(f"DEBUG-SCAN: Fehler beim Löschen nicht mehr existierender Dateien: {e}")
             
             # Aktualisiere den Scan-Verlauf
-            self.cursor.execute(
-                "INSERT OR REPLACE INTO scan_history (directory, last_scan) VALUES (?, ?)",
-                (directory, current_time)
-            )
-            
-            self.conn.commit()
-            logging.info(f"Indexierung abgeschlossen. {new_files_count} neue Dateien indexiert.")
+            try:
+                self.cursor.execute(
+                    "INSERT OR REPLACE INTO scan_history (directory, last_scan) VALUES (?, ?)",
+                    (directory, current_time)
+                )
+                
+                self.conn.commit()
+                logging.info(f"DEBUG-SCAN: Indexierung abgeschlossen. {new_files_count} neue Dateien indexiert.")
+            except Exception as e:
+                logging.error(f"DEBUG-SCAN: Fehler beim Aktualisieren des Scan-Verlaufs: {e}")
+                
             return new_files_count
+        
+        except Exception as e:
+            logging.error(f"DEBUG-SCAN: Kritischer Fehler bei der Indizierung von {directory}: {str(e)}")
+            return 0
         
         finally:
             # Setze den Indexierungsstatus zurück
             self.is_indexing = False
+            logging.debug("DEBUG-SCAN: Indizierung abgeschlossen, Status zurückgesetzt")
     
     def is_currently_indexing(self) -> bool:
         """
@@ -264,34 +305,37 @@ class EpisodeDatabase:
             r"(.*?) Movie (\d+) (.*)"
         ]
         
-        # Versuche Staffel+Episode-Muster
-        for pattern in patterns:
-            match = re.match(pattern, filename, re.IGNORECASE)
-            if match:
-                groups = match.groups()
-                # Spezifische Muster können 3 oder 4 Gruppen haben
-                if len(groups) == 4:
-                    title, season, episode, language = groups
-                    return title.strip(), int(season), int(episode), language.strip()
-                elif len(groups) == 3:
-                    # Falls keine Sprachinformation vorhanden, versuche aus dem Dateipfad zu extrahieren
-                    title, season, episode = groups
-                    language = self._extract_language_from_path(file_path)
-                    return title.strip(), int(season), int(episode), language
-        
-        # Versuche Film-Muster (ohne Staffel)
-        for pattern in movie_patterns:
-            match = re.match(pattern, filename, re.IGNORECASE)
-            if match:
-                groups = match.groups()
-                if len(groups) == 3:
-                    title, episode, language = groups
-                    return title.strip(), 0, int(episode), language.strip()
-                elif len(groups) == 2:
-                    title, episode = groups
-                    language = self._extract_language_from_path(file_path)
-                    return title.strip(), 0, int(episode), language
-        
+        try:
+            # Versuche Staffel+Episode-Muster
+            for pattern in patterns:
+                match = re.match(pattern, filename, re.IGNORECASE)
+                if match:
+                    groups = match.groups()
+                    # Spezifische Muster können 3 oder 4 Gruppen haben
+                    if len(groups) == 4:
+                        title, season, episode, language = groups
+                        return title.strip(), int(season), int(episode), language.strip()
+                    elif len(groups) == 3:
+                        # Falls keine Sprachinformation vorhanden, versuche aus dem Dateipfad zu extrahieren
+                        title, season, episode = groups
+                        language = self._extract_language_from_path(file_path)
+                        return title.strip(), int(season), int(episode), language
+            
+            # Versuche Film-Muster (ohne Staffel)
+            for pattern in movie_patterns:
+                match = re.match(pattern, filename, re.IGNORECASE)
+                if match:
+                    groups = match.groups()
+                    if len(groups) == 3:
+                        title, episode, language = groups
+                        return title.strip(), 0, int(episode), language.strip()
+                    elif len(groups) == 2:
+                        title, episode = groups
+                        language = self._extract_language_from_path(file_path)
+                        return title.strip(), 0, int(episode), language
+        except Exception as e:
+            logging.error(f"DEBUG-SCAN: Fehler beim Parsen des Dateinamens {filename}: {e}")
+            
         return None
     
     def _extract_language_from_path(self, file_path: str) -> str:

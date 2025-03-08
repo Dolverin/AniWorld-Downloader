@@ -1742,6 +1742,8 @@ def check_if_episode_exists(anime_title, season, episode, language, download_pat
     Returns:
         bool: True, wenn die Episode existiert, sonst False
     """
+    logging.info(f"DEBUG-CHECK: Prüfe Existenz von {anime_title} S{season}E{episode} ({language}) in {download_path}")
+    
     try:
         # Importiere die Datenbankfunktionalität lokal, um zirkuläre Importe zu vermeiden
         from aniworld.common.db import get_db
@@ -1751,16 +1753,17 @@ def check_if_episode_exists(anime_title, season, episode, language, download_pat
         
         # Wenn gerade eine Indizierung läuft, stattdessen die Dateisystem-Suche verwenden
         if db.is_currently_indexing():
-            logging.debug("Datenbankindizierung läuft, verwende Dateisystemsuche")
+            logging.debug("DEBUG-CHECK: Datenbankindizierung läuft, verwende Dateisystemsuche")
             return _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path)
         
         # Überprüfe zunächst, ob wir die Episode in der Datenbank finden können
+        logging.debug(f"DEBUG-CHECK: Suche in Datenbank nach {anime_title} S{season}E{episode}")
         if db.episode_exists(anime_title, season, episode, language):
-            logging.debug(f"Episode {anime_title} S{season}E{episode} ({language}) in Datenbank gefunden")
+            logging.debug(f"DEBUG-CHECK: Episode {anime_title} S{season}E{episode} ({language}) in Datenbank gefunden")
             return True
             
         # Wenn nicht in der Datenbank, aktualisiere den Index für diesen Ordner
-        logging.debug(f"Episode nicht im Index gefunden, durchsuche Dateisystem in {download_path}")
+        logging.debug(f"DEBUG-CHECK: Episode nicht im Index gefunden, durchsuche Dateisystem in {download_path}")
         
         # Pfad zum Ordner der Serie
         sanitized_title = sanitize_path(anime_title)
@@ -1768,34 +1771,37 @@ def check_if_episode_exists(anime_title, season, episode, language, download_pat
         
         # Prüfen, ob Indizierung gerade läuft
         if db.is_currently_indexing():
-            logging.debug("Datenbankindizierung läuft bereits, verwende Dateisystemsuche")
+            logging.debug("DEBUG-CHECK: Datenbankindizierung läuft bereits, verwende Dateisystemsuche")
             return _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path)
         
         # Indiziere Verzeichnisse (nur wenn nötig)
         new_files = 0
         if os.path.exists(series_path):
+            logging.debug(f"DEBUG-CHECK: Indiziere Serienordner {series_path}")
             new_files += db.scan_directory(series_path, force_rescan=False)
         
         # Wenn wir keine neuen Dateien im Serienordner gefunden haben, 
         # überprüfe auch den allgemeinen Download-Ordner
         if new_files == 0:
+            logging.debug(f"DEBUG-CHECK: Keine Dateien im Serienordner gefunden, indiziere auch {download_path}")
             db.scan_directory(download_path, force_rescan=False)
         
         # Versuche erneut, die Episode zu finden
+        logging.debug(f"DEBUG-CHECK: Wiederhole Datenbanksuche nach Indizierung")
         if db.episode_exists(anime_title, season, episode, language):
-            logging.debug(f"Episode {anime_title} S{season}E{episode} ({language}) nach Indizierung gefunden")
+            logging.debug(f"DEBUG-CHECK: Episode {anime_title} S{season}E{episode} ({language}) nach Indizierung gefunden")
             return True
                 
-        logging.debug(f"Episode {anime_title} S{season}E{episode} ({language}) wurde nicht gefunden")
+        logging.debug(f"DEBUG-CHECK: Episode {anime_title} S{season}E{episode} ({language}) wurde nicht gefunden")
         return False
         
     except ImportError as e:
         # Fallback zur alten Methode, wenn die DB nicht verfügbar ist
-        logging.warning(f"Datenbankindex nicht verfügbar: {e}, verwende Dateisystemsuche...")
+        logging.warning(f"DEBUG-CHECK: Datenbankindex nicht verfügbar: {e}, verwende Dateisystemsuche...")
         return _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path)
     except Exception as e:
         # Bei Datenbankproblemen zur alten Methode zurückfallen
-        logging.error(f"Fehler bei der Datenbanksuche: {e}, verwende Dateisystemsuche...")
+        logging.error(f"DEBUG-CHECK: Fehler bei der Datenbanksuche: {e}, verwende Dateisystemsuche...")
         return _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path)
 
 

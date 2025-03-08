@@ -560,6 +560,9 @@ class EpisodeForm(npyscreen.ActionForm):
         download_path = self.directory_field.value or aniworld_globals.DEFAULT_DOWNLOAD_PATH
         language = ["German Dub", "English Sub", "German Sub"][self.language_selector.value[0]]
         
+        logging.info(f"DEBUG-UI: Starte Suche nach vorhandenen Episoden, Pfad: {download_path}, Sprache: {language}")
+        logging.info(f"DEBUG-UI: Anime-Titel: {self.anime_title}, {len(self.episode_selector.values)} Episoden zu prüfen")
+        
         self.existing_episodes = []
         new_values = []
         
@@ -583,28 +586,48 @@ class EpisodeForm(npyscreen.ActionForm):
                     if title.startswith("[✓] ") or title.startswith("[✗] "):
                         # Bereits markiert, Original-Titel extrahieren
                         original_title = title[4:]
-                        season, episode = self.episode_info[original_title]
+                        logging.debug(f"DEBUG-UI: Prüfe bereits markierte Episode: {original_title}")
+                        try:
+                            season, episode = self.episode_info[original_title]
+                        except KeyError:
+                            logging.error(f"DEBUG-UI: Keine Info für {original_title} gefunden, überspringe")
+                            result_queue.put((i, title, False, False))  # Keine Info, überspringen
+                            continue
                     else:
                         # Nicht markiert, Staffel- und Episodennummer aus dem Titel extrahieren
-                        season, episode = self.episode_info[title]
+                        logging.debug(f"DEBUG-UI: Prüfe unmarkierte Episode: {title}")
+                        try:
+                            season, episode = self.episode_info[title]
+                        except KeyError:
+                            logging.error(f"DEBUG-UI: Keine Info für {title} gefunden, überspringe")
+                            result_queue.put((i, title, False, False))  # Keine Info, überspringen
+                            continue
                     
-                    # Episode im Dateisystem suchen
-                    exists = check_if_episode_exists(
-                        self.anime_title, 
-                        season, 
-                        episode, 
-                        language, 
-                        download_path
-                    )
+                    # Logge die Episode, die wir überprüfen
+                    logging.info(f"DEBUG-UI: Prüfe Episode {i+1}/{len(self.episode_selector.values)}: S{season}E{episode}, Titel: {title}")
                     
-                    # Ergebnis in die Queue schreiben
-                    result_queue.put((i, title, exists))
+                    try:
+                        # Episode im Dateisystem suchen
+                        exists = check_if_episode_exists(
+                            self.anime_title, 
+                            season, 
+                            episode, 
+                            language, 
+                            download_path
+                        )
+                        logging.debug(f"DEBUG-UI: Ergebnis für S{season}E{episode}: {'Gefunden' if exists else 'Nicht gefunden'}")
+                        # Ergebnis in die Queue schreiben
+                        result_queue.put((i, title, exists, True))  # Valides Ergebnis
+                    except Exception as e:
+                        # Bei Fehler Eintrag überspringen
+                        logging.error(f"DEBUG-UI: Fehler bei Prüfung von S{season}E{episode}: {str(e)}")
+                        result_queue.put((i, title, False, False))  # Fehler, als nicht gefunden markieren
                 
                 # Signal für Ende
                 result_queue.put(None)
             except Exception as e:
                 # Bei Fehler Signal senden
-                logging.error(f"Fehler beim Überprüfen von Episoden: {e}")
+                logging.error(f"DEBUG-UI: Kritischer Fehler beim Überprüfen von Episoden: {e}")
                 result_queue.put(f"ERROR: {str(e)}")
         
         # Thread starten
@@ -613,16 +636,18 @@ class EpisodeForm(npyscreen.ActionForm):
         
         # Auf Ergebnisse warten mit Timeout
         episodes_found = 0
+        episodes_checked = 0
         start_time = time.time()
-        timeout = 60  # Maximale Wartezeit in Sekunden
+        timeout = 300  # Maximale Wartezeit auf 5 Minuten erhöht
         
         while True:
             # Prüfen, ob der Scan zu lange dauert
             if time.time() - start_time > timeout:
-                self.status_text.value = "Zeitüberschreitung bei der Suche. Versuchen Sie es später erneut."
+                logging.error(f"DEBUG-UI: Zeitüberschreitung nach {timeout} Sekunden. {episodes_checked} von {len(self.episode_selector.values)} geprüft.")
+                self.status_text.value = f"Zeitüberschreitung bei der Suche. {episodes_checked} von {len(self.episode_selector.values)} Episoden geprüft."
                 self.display()
-                # Thread beenden lassen und Markierung abbrechen
-                return
+                # Thread beenden lassen und mit den bisherigen Ergebnissen fortfahren
+                break
                 
             # Auf Ergebnis mit kurzem Timeout warten, damit die UI nicht blockiert
             try:
@@ -633,14 +658,26 @@ class EpisodeForm(npyscreen.ActionForm):
                 
             # Prüfen, ob Ende oder Fehler
             if result is None:
+                logging.info(f"DEBUG-UI: Alle {episodes_checked} Episoden wurden geprüft.")
                 break
             if isinstance(result, str) and result.startswith("ERROR"):
+                logging.error(f"DEBUG-UI: Thread-Fehler: {result[6:]}")
                 self.status_text.value = f"Fehler: {result[6:]}"
                 self.display()
-                return
+                break
                 
             # Ergebnis verarbeiten
-            i, title, exists = result
+            i, title, exists, is_valid = result
+            episodes_checked += 1
+            
+            if not is_valid:
+                # Ungültiges Ergebnis, Episode als nicht vorhanden markieren
+                if not title.startswith("[✗] "):
+                    original_title = title[4:] if title.startswith("[✓] ") else title
+                    new_values.append(f"[✗] {original_title}")
+                else:
+                    new_values.append(title)
+                continue
             
             # Je nach Vorhandensein markieren
             if exists:
@@ -659,14 +696,24 @@ class EpisodeForm(npyscreen.ActionForm):
                     new_values.append(title)
                     
             # UI aktualisieren für Fortschrittsanzeige
-            if len(new_values) % 5 == 0:
+            if len(new_values) % 5 == 0 or len(new_values) == len(self.episode_selector.values):
                 self.status_text.value = f"Suche nach vorhandenen Episoden... ({len(new_values)}/{len(self.episode_selector.values)})"
                 self.display()
         
         # Warte auf Thread-Ende
         scan_thread.join(timeout=1.0)
         
+        # Stelle sicher, dass alle Episoden markiert wurden
+        while len(new_values) < len(self.episode_selector.values):
+            title = self.episode_selector.values[len(new_values)]
+            if not title.startswith("[✗] "):
+                original_title = title[4:] if title.startswith("[✓] ") else title
+                new_values.append(f"[✗] {original_title}")
+            else:
+                new_values.append(title)
+        
         # Aktualisiere die Anzeige
+        logging.info(f"DEBUG-UI: Aktualisiere UI mit {len(new_values)} Episoden, davon {episodes_found} gefunden")
         self.episode_selector.values = new_values
         self.episode_selector.display()
         
