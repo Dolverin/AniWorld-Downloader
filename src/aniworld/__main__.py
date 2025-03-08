@@ -1149,24 +1149,36 @@ def main():
     # Setze Zeitlimit für Anfragen
     socket.setdefaulttimeout(30)
 
-    # Installiere Log-Handler
-    log_handler = colorlog.StreamHandler()
-    log_handler.setFormatter(colorlog.ColoredFormatter(
+    # Logging-Setup: Alle Logs in Datei umleiten, nur kritische Fehler auf Konsole
+    # Stelle sicher, dass der Log-Handler existiert
+    file_handler = aniworld_globals.setup_file_handler()
+    
+    # Konsolen-Handler nur für kritische Fehler
+    console_handler = colorlog.StreamHandler()
+    console_handler.setFormatter(colorlog.ColoredFormatter(
         '%(log_color)s%(levelname)s:%(message)s',
         log_colors=aniworld_globals.log_colors))
+    console_handler.setLevel(logging.CRITICAL)  # Nur kritische Fehler auf der Konsole
 
-    # Logging konfigurieren
+    # Konfiguriere das Root-Logger
+    logger = logging.getLogger()
+    
     if aniworld_globals.IS_DEBUG_MODE:
-        file_handler = aniworld_globals.setup_file_handler()
-        logger = logging.getLogger()
         logger.setLevel(logging.DEBUG)
-        logger.addHandler(file_handler)
-        logger.addHandler(log_handler)
-        # Warnung über Debug-Modus anzeigen
-        logging.warning("DEBUG-Modus ist aktiviert! Logs werden in %s gespeichert.", aniworld_globals.LOG_FILE_PATH)
+        # Warnung über Debug-Modus anzeigen (einmalig auf Konsole)
+        print(f"DEBUG-Modus ist aktiviert! Logs werden in {aniworld_globals.LOG_FILE_PATH} gespeichert.")
     else:
-        logging.basicConfig(level=logging.INFO, handlers=[log_handler])
+        logger.setLevel(logging.INFO)
+    
+    # Entferne alle bestehenden Handler
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # Füge die neuen Handler hinzu
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
 
+    # Reduziere das Logging-Level für externe Bibliotheken
     logging.getLogger('requests').setLevel(logging.WARNING)
     
     # Initialisiere die Episoden-Datenbank und starte eine Hintergrund-Indizierung
