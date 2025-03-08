@@ -45,15 +45,32 @@ log_colors = {
 
 def setup_file_handler():
     try:
-        if os.path.exists(LOG_FILE_PATH):
-            os.remove(LOG_FILE_PATH)
-        handler = logging.FileHandler(LOG_FILE_PATH)
-        handler.setLevel(logging.DEBUG)
-        handler.setFormatter(
-            logging.Formatter('%(asctime)s - %(levelname)s - %(funcName)s - %(message)s')
+        # Verwende RotatingFileHandler anstelle von FileHandler
+        # für automatische Rotation bei Größenüberschreitung
+        from logging.handlers import RotatingFileHandler
+        
+        # Erstelle das Verzeichnis für die Logdatei, falls es nicht existiert
+        log_dir = os.path.dirname(LOG_FILE_PATH)
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # Erstelle einen RotatingFileHandler mit maximal 5MB pro Datei
+        # und maximal 3 Backup-Dateien
+        handler = RotatingFileHandler(
+            LOG_FILE_PATH,
+            maxBytes=5*1024*1024,  # 5 MB
+            backupCount=3,
+            encoding='utf-8'
         )
+        
+        # Setze ein klares Format für die Logeinträge
+        formatter = logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(funcName)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        handler.setFormatter(formatter)
         return handler
-    except PermissionError:
+    except Exception as e:
+        print(f"Fehler beim Einrichten des Datei-Log-Handlers: {e}")
         return None
 
 
