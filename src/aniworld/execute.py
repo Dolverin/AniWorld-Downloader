@@ -600,132 +600,177 @@ def execute(params: Dict[str, Any]) -> None:
 
 
 def process_episode(params: Dict[str, Any]) -> None:
-    logging.debug("Processing episode: %s", params['episode_url'])
+    logging.debug("Processing episode with params: %s", params)
+
     try:
-        episode_html = fetch_url_content(params['episode_url'])
-        soup = BeautifulSoup(episode_html, 'html.parser')
-        episode_title = get_episode_title(soup)
-        anime_title = get_anime_title(soup)
-        data = get_provider_data(soup)
+        html_content = fetch_url_content(params['episode_url'])
 
-        logging.debug("Language Code: %s", params['lang'])
-        logging.debug("Available Providers: %s", data.keys())
-
-        # Priorisierte Provider-Liste verwenden
-        available_providers = set(data.keys())
-        
-        # Initialisiere eine leere Liste für die zu versuchenden Provider
-        providers_to_try = []
-        
-        # Zuerst den ausgewählten Provider hinzufügen, falls er verfügbar ist
-        if params['provider_selected'] in available_providers:
-            providers_to_try.append(params['provider_selected'])
-            
-        # Dann die restlichen Provider gemäß der Prioritätsliste hinzufügen
-        for provider in PROVIDER_PRIORITY:
-            if provider in available_providers and provider != params['provider_selected']:
-                providers_to_try.append(provider)
-        
-        # Prüfen, ob irgendwelche Provider verfügbar sind
-        if not providers_to_try:
-            logging.error("Keine Provider verfügbar für diese Episode: %s", params['episode_url'])
+        if not html_content:
+            logging.error("Konnte keine HTML-Inhalte für URL abrufen: %s", params['episode_url'])
             return
-            
-        # Durch die Provider iterieren und versuchen, die Episode herunterzuladen
-        for provider in providers_to_try:
-            try:
-                logging.info("Versuche Provider: %s", provider)
-                process_provider({
-                    'provider': provider,
-                    'data': data,
-                    'lang': params['lang'],
-                    'provider_mapping': params['provider_mapping'],
-                    'episode_url': params['episode_url'],
-                    'action_selected': params['action_selected'],
-                    'aniskip_selected': params['aniskip_selected'],
-                    'output_directory': params['output_directory'],
-                    'anime_title': anime_title,
-                    "anime_slug": params['anime_slug'],
-                    'episode_title': episode_title,
-                    'only_direct_link': params['only_direct_link'],
-                    'only_command': params['only_command']
-                })
-                # Wenn erfolgreich, breche die Schleife ab
-                logging.debug("Provider %s erfolgreich verwendet", provider)
-                break
-            except Exception as e:
-                logging.warning("Provider %s fehlgeschlagen: %s", provider, str(e))
-                continue
+
+        soup = BeautifulSoup(html_content, 'html.parser')
+        provider_data = providers(soup)
+
+        # Get anime, season, and episode titles
+        anime_title = params.get('anime_title') or get_anime_title(soup)
+        episode_name = get_episode_title(soup)
+
+        # Process the anime, season, and episode numbers
+        season_number, episode_number = get_season_and_episode_numbers(params['episode_url'])
+
+        # Extract season and episode titles from the URL
+        parts = params['episode_url'].split('/')
+        if len(parts) >= 7 and 'staffel-' in parts[-2]:
+            season_title = parts[-2].replace('-', ' ').title()
+        elif len(parts) >= 6 and 'filme' in parts[-2]:
+            season_title = "Movie"
+            season_number = 0
         else:
-            # Wenn alle Provider fehlschlagen
+            season_title = f"Staffel {season_number}" if season_number else "Movie"
+
+        if len(parts) >= 7 and 'episode-' in parts[-1]:
+            episode_title = parts[-1].replace('-', ' ').title()
+        elif len(parts) >= 6 and 'film-' in parts[-1]:
+            episode_title = parts[-1].replace('-', ' ').title()
+        else:
+            episode_title = f"Folge {episode_number}" if episode_number else "Movie"
+
+        # Use the provider preference order defined in the module
+        provider_tried = False
+        for provider in PROVIDER_PRIORITY:
+            if provider in provider_data:
+                provider_tried = True
+                logging.info("Versuche Provider: %s", provider)
+                try:
+                    process_provider(provider, provider_data, params, anime_title, season_title, episode_title)
+                    return  # Successful, exit
+                except ValueError as e:
+                    logging.warning("Provider %s fehlgeschlagen: %s", provider, str(e))
+                    continue  # Try the next provider
+                except Exception as e:
+                    logging.error("Unerwarteter Fehler bei Provider %s: %s", provider, str(e))
+                    continue  # Try the next provider
+
+        # If we reached here, all providers failed
+        if provider_tried:
             logging.error("Alle verfügbaren Provider sind fehlgeschlagen für Episode: %s", params['episode_url'])
             
-    except AttributeError:
-        logging.warning("Episode broken.")
+            # Gib dem Benutzer eine klare Fehlermeldung über das UI
+            print("\nFehler: Keine Provider für die ausgewählte Sprache verfügbar.")
+            print("Verfügbare Sprachen für diese Episode:")
+            
+            # Zeige verfügbare Sprachen an
+            available_languages = set()
+            for provider in provider_data:
+                for lang_key in provider_data[provider]:
+                    lang = get_language_string(lang_key)
+                    available_languages.add(lang)
+            
+            if available_languages:
+                for lang in available_languages:
+                    print(f" - {lang}")
+                print("\nBitte wählen Sie eine der verfügbaren Sprachen mit --language.")
+            else:
+                print(" - Keine Sprachen verfügbar.")
+            
+            # Warte, damit der Benutzer die Meldung lesen kann, bevor das Programm beendet wird
+            time.sleep(5)
+        else:
+            logging.error("Keine unterstützten Provider für die URL verfügbar: %s", params['episode_url'])
+            print("\nFehler: Keine unterstützten Provider für diese Episode gefunden.")
+            time.sleep(3)
+    except Exception as e:
+        logging.exception("Fehler bei der Verarbeitung der Episode: %s", e)
+        print(f"\nFehler bei der Verarbeitung der Episode: {e}")
+        time.sleep(3)
 
 
-def process_provider(params: Dict[str, Any]) -> None:
-    logging.debug("Trying provider: %s", params['provider'])
-    available_languages = params['data'].get(params['provider'], {}).keys()
-    logging.debug("Available Languages for %s: %s", params['provider'], available_languages)
-
-    for language in params['data'][params['provider']]:
-        if language == int(params['lang']):
-            season_number, episode_number = get_season_and_episode_numbers(params['episode_url'])
-            action = params['action_selected']
-
-            provider_function = params['provider_mapping'][params['provider']]
-            request_url = params['data'][params['provider']][language]
-            link = fetch_direct_link(provider_function, request_url)
-
-            if link is None:
-                logging.warning("Provider %s konnte keinen direkten Link liefern", params['provider'])
-                raise Exception(f"Provider {params['provider']} konnte keinen direkten Link liefern")
-
-            if params['only_direct_link']:
-                logging.debug("Only direct link requested: %s", link)
-                print(link)
-                break
-
-            mpv_title = (
-                f"{params['anime_title']} --- S{season_number}E{episode_number} - "
-                f"{params['episode_title']}"
-                if season_number and episode_number
-                else f"{params['anime_title']} --- Movie {episode_number} - "
-                f"{params['episode_title']}"
-            )
-
-            episode_params = {
-                "action": action,
-                "link": link,
-                "mpv_title": mpv_title,
-                "anime_title": params['anime_title'],
-                "anime_slug": params['anime_slug'],
-                "episode_number": episode_number,
-                "season_number": season_number,
-                "output_directory": params['output_directory'],
-                "only_command": params['only_command'],
-                "aniskip_selected": params['aniskip_selected'],
-                "provider": params['provider'],
-                "language": params['lang']
-            }
-
-            logging.debug("Performing action with params: %s", episode_params)
-            perform_action(episode_params)
-            return  # Erfolgreich verarbeitet
+def process_provider(provider: str, provider_data: dict, params: dict, anime_title: str, season_title: str, episode_title: str) -> None:
+    """
+    Verarbeitet einen Provider und führt die entsprechende Aktion aus.
     
-    # Wenn wir hierher kommen, wurde keine passende Sprache gefunden
-    available_languages = [
-        get_language_string(lang_code)
-        for lang_code in params['data'][params['provider']].keys()
-    ]
-
-    message = (
-        f"Keine verfügbaren Sprachen für Provider {params['provider']} "
-        f"die der ausgewählten Sprache {get_language_string(int(params['lang']))} entsprechen. "
-        f"\nVerfügbare Sprachen: {available_languages}"
-    )
-
-    logging.warning(message)
-    print(message)
-    raise Exception(message)  # Ausnahme werfen, damit der nächste Provider versucht wird
+    Args:
+        provider: Der zu verwendende Provider (z.B. 'VOE', 'Vidoza')
+        provider_data: Die Provider-Daten für alle verfügbaren Provider
+        params: Die Parameter für die Verarbeitung
+        anime_title: Der Titel des Animes
+        season_title: Der Titel der Staffel
+        episode_title: Der Titel der Episode
+    """
+    logging.debug("Processing provider: %s", provider)
+    
+    # Prüfe, ob die ausgewählte Sprache für diesen Provider verfügbar ist
+    lang_key = int(params['language'])
+    if lang_key not in provider_data[provider]:
+        # Sammle verfügbare Sprachen für diesen Provider
+        available_langs = [get_language_string(key) for key in provider_data[provider].keys()]
+        raise ValueError(f"Keine verfügbaren Sprachen für Provider {provider} die der ausgewählten Sprache {get_language_string(lang_key)} entsprechen. \nVerfügbare Sprachen: {available_langs}")
+    
+    # Extrahiere den direkten Link für diesen Provider und die gewählte Sprache
+    request_url = provider_data[provider][lang_key]
+    
+    # Provider-Funktion auswählen und direkten Link abrufen
+    provider_function = None
+    if provider == "VOE":
+        from aniworld.extractors.provider.voe import voe_get_direct_link
+        provider_function = voe_get_direct_link
+    elif provider == "Vidoza":
+        from aniworld.extractors.provider.vidoza import vidoza_get_direct_link
+        provider_function = vidoza_get_direct_link
+    elif provider == "Streamtape":
+        from aniworld.extractors.provider.streamtape import streamtape_get_direct_link
+        provider_function = streamtape_get_direct_link
+    elif provider == "Doodstream":
+        from aniworld.extractors.provider.doodstream import doodstream_get_direct_link
+        provider_function = doodstream_get_direct_link
+    elif provider == "Vidmoly":
+        from aniworld.extractors.provider.vidmoly import vidmoly_get_direct_link
+        provider_function = vidmoly_get_direct_link
+    elif provider == "SpeedFiles":
+        from aniworld.extractors.provider.speedfiles import speedfiles_get_direct_link
+        provider_function = speedfiles_get_direct_link
+    else:
+        raise ValueError(f"Unbekannter Provider: {provider}")
+    
+    direct_link = fetch_direct_link(provider_function, request_url)
+    
+    if direct_link is None:
+        raise ValueError(f"Provider {provider} konnte keinen direkten Link liefern")
+    
+    # Bei nur Direct Link Ausgabe den direkten Link zurückgeben
+    if params.get('only_direct_link', False):
+        print(direct_link)
+        return
+    
+    # Hole season_number und episode_number aus dem URL-Pfad
+    season_number, episode_number = get_season_and_episode_numbers(params['episode_url'])
+    
+    # Anime-Titel aus dem Slug ableiten wenn nicht angegeben
+    if not anime_title:
+        anime_title = params.get('anime_title', '')
+        if not anime_title and 'anime_slug' in params:
+            anime_title = params['anime_slug'].replace('-', ' ').title()
+    
+    # Baue Parameter für die Aktion
+    action_params = {
+        'provider': provider,
+        'direct_link': direct_link,
+        'anime_title': anime_title,
+        'anime_slug': params.get('anime_slug', ''),
+        'season_title': season_title,
+        'episode_title': episode_title,
+        'season_number': season_number,
+        'episode_number': episode_number,
+        'language': lang_key,
+        'action': params.get('action', 'Download'),
+        'aniskip': params.get('aniskip', False),
+        'output': params.get('output', ''),
+        'output_directory': params.get('output_directory', ''),
+        'only_direct_link': params.get('only_direct_link', False),
+        'only_command': params.get('only_command', False),
+        'force_download': params.get('force_download', False)
+    }
+    
+    # Führe die Aktion aus
+    execute(action_params)
