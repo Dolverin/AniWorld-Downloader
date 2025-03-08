@@ -1184,13 +1184,14 @@ def main():
                     import time
                     # Warte kurz, damit die Hauptanwendung starten kann
                     time.sleep(1)
-                    logging.info(f"Starte Hintergrund-Indexierung des Download-Ordners: {download_path}")
+                    # Direkter Print zur Konsole statt Logging (erscheint vor der UI)
+                    print(f"[INFO] Starte Hintergrund-Indexierung des Download-Ordners: {download_path}")
                     from aniworld.common.db import get_db
                     background_db = get_db()  # Eine eigene Instanz für diesen Thread
                     background_db.scan_directory(download_path)
-                    logging.info("Hintergrund-Indexierung abgeschlossen")
+                    print("[INFO] Hintergrund-Indexierung abgeschlossen")
                 except Exception as e:
-                    logging.error(f"Fehler bei der Hintergrund-Indexierung: {e}")
+                    print(f"[ERROR] Fehler bei der Hintergrund-Indexierung: {e}")
             
             # Starte den Thread
             threading.Thread(
