@@ -134,6 +134,13 @@ class EpisodeForm(npyscreen.ActionForm):
             key=lambda x: (x[0] if x[0] > 0 else 999, x[1])
         )
 
+        # Episoden nach Staffeln gruppieren
+        self.seasons_map = {}
+        for season, episode, title, url in sorted_results:
+            if season not in self.seasons_map:
+                self.seasons_map[season] = []
+            self.seasons_map[season].append((episode, title))
+
         season_episode_map = {title: url for _, _, title, url in sorted_results}
         self.episode_map = season_episode_map
 
@@ -206,7 +213,7 @@ class EpisodeForm(npyscreen.ActionForm):
 
         logging.debug("Provider selector created")
 
-        self.add(npyscreen.FixedText, value="", editable=False)  # new line
+        self.add(npyscreen.FixedText, value="", editable=False)
         self.episode_selector = self.add(
             npyscreen.TitleMultiSelect,
             name="Episode Selection",
@@ -217,6 +224,33 @@ class EpisodeForm(npyscreen.ActionForm):
         logging.debug("Episode selector created")
 
         self.add(npyscreen.FixedText, value="")
+        
+        # Dropdown für Staffelauswahl
+        self.season_selector = self.add(
+            npyscreen.TitleSelectOne, 
+            name="Staffel auswählen:",
+            values=["Staffel " + str(season) if season > 0 else "Filme" for season in sorted(self.seasons_map.keys())],
+            max_height=4,
+            scroll_exit=True
+        )
+        
+        # Button zum Auswählen aller Episoden einer Staffel
+        self.select_season_button = self.add(
+            npyscreen.ButtonPress,
+            name="Alle Episoden dieser Staffel auswählen",
+            max_height=1,
+            when_pressed_function=self.select_season_episodes,
+            scroll_exit=True
+        )
+
+        # Button zum Auswählen aller Episoden hinzufügen
+        self.select_all_button = self.add(
+            npyscreen.ButtonPress,
+            name="Alle Episoden auswählen",
+            max_height=1,
+            when_pressed_function=self.select_all_episodes,
+            scroll_exit=True
+        )
 
         self.display_text = False
 
@@ -365,6 +399,44 @@ class EpisodeForm(npyscreen.ActionForm):
 
     def go_to_second_form(self):
         self.parentApp.switchForm("SECOND")
+
+    def select_all_episodes(self):
+        """Wählt alle Episoden in der MultiSelect-Liste aus."""
+        logging.debug("Selecting all episodes")
+        all_indices = list(range(len(self.episode_selector.values)))
+        self.episode_selector.value = all_indices
+        self.episode_selector.display()
+    
+    def select_season_episodes(self):
+        """Wählt alle Episoden der ausgewählten Staffel aus."""
+        if not self.season_selector.value:
+            return
+        
+        selected_season_idx = self.season_selector.value[0]
+        seasons = sorted(self.seasons_map.keys())
+        selected_season = seasons[selected_season_idx]
+        
+        logging.debug("Selecting all episodes for season {}".format(selected_season))
+        
+        # Episodentitel für diese Staffel finden
+        season_episodes = [title for _, title in self.seasons_map[selected_season]]
+        
+        # Indizes dieser Episoden in der episode_selector-Liste finden
+        indices_to_select = []
+        for i, title in enumerate(self.episode_selector.values):
+            if title in season_episodes:
+                indices_to_select.append(i)
+        
+        # Diese Episoden in der MultiSelect-Liste auswählen
+        if self.episode_selector.value:
+            # Bestehende Auswahl behalten und neue hinzufügen
+            current_selection = set(self.episode_selector.value)
+            current_selection.update(indices_to_select)
+            self.episode_selector.value = list(current_selection)
+        else:
+            self.episode_selector.value = indices_to_select
+        
+        self.episode_selector.display()
 
 
 # pylint: disable=R0901
@@ -893,26 +965,84 @@ def execute_with_params(args, selected_episodes, anime_title, language, anime_sl
 
 
 def run_app_with_query(args):
-    def run_app(query):
-        logging.debug("Running app with query: %s", query)
-        clear_screen()
-        app = AnimeApp(query)
-        app.run()
-
-    try:
+    """Run the application with a query, slug, or link."""
+    # Prüfe, ob wir in einer SSH-Sitzung sind
+    is_ssh = os.environ.get('SSH_CLIENT') or os.environ.get('SSH_TTY')
+    
+    if is_ssh and args.slug:
+        logging.info("SSH-Sitzung erkannt, verwende direkte Parameterverarbeitung ohne TUI")
+        direct_execute_with_params(args)
+    else:
         try:
-            logging.debug("Trying to resize Terminal.")
-            set_terminal_size()
-            run_app(search_anime(slug=args.slug, link=args.link))
-        except npyscreen.wgwidget.NotEnoughSpaceForWidget:
-            logging.debug("Not enough space for widget. Asking user to resize terminal.")
-            clear_screen()
-            print("Please increase your current terminal size.")
-            logging.debug("Exiting due to terminal size.")
+            try:
+                logging.debug("Trying to resize Terminal.")
+                set_terminal_size()
+                run_app(search_anime(slug=args.slug, link=args.link))
+            except npyscreen.wgwidget.NotEnoughSpaceForWidget:
+                logging.debug("Not enough space for widget. Asking user to resize terminal.")
+                clear_screen()
+                print("Please increase your current terminal size.")
+                logging.debug("Exiting due to terminal size.")
+                sys.exit()
+        except KeyboardInterrupt:
+            logging.debug("KeyboardInterrupt encountered. Exiting.")
             sys.exit()
-    except KeyboardInterrupt:
-        logging.debug("KeyboardInterrupt encountered. Exiting.")
-        sys.exit()
+
+
+def run_app(query):
+    logging.debug("Running app with query: %s", query)
+    clear_screen()
+    app = AnimeApp(query)
+    app.run()
+
+
+def direct_execute_with_params(args):
+    """Führt die Aktion direkt aus, ohne das TUI zu verwenden."""
+    try:
+        anime_slug = search_anime(slug=args.slug, link=args.link)
+        if not anime_slug:
+            print(f"Konnte keine Anime-Informationen für den Slug '{args.slug}' finden.")
+            return
+            
+        # Anime-Titel aus dem Slug ableiten (vereinfachte Version)
+        anime_title = anime_slug.replace('-', ' ').title()
+        
+        language = get_language_code(args.language) if args.language else 1  # Default: German Dub
+        
+        # Wenn args.episode numerische Werte enthält, konvertieren wir sie in URLs
+        if args.episode:
+            try:
+                # Prüfen, ob die Episoden numerisch sind
+                episode_numbers = []
+                for ep in args.episode:
+                    try:
+                        # Versuche, die Episode als Zahl zu interpretieren
+                        episode_numbers.append(int(ep))
+                    except ValueError:
+                        # Wenn es keine Zahl ist, behandle es als URL
+                        episode_numbers.append(ep)
+                
+                # Wenn wir numerische Episoden haben, konvertieren wir sie in URLs
+                if all(isinstance(ep, int) for ep in episode_numbers):
+                    logging.debug("Konvertiere Episodennummern in URLs")
+                    # Erstelle URLs für die Episoden
+                    base_url = f"https://aniworld.to/anime/stream/{anime_slug}/staffel-1/episode-"
+                    selected_episodes = [f"{base_url}{ep}" for ep in episode_numbers]
+                else:
+                    # Wenn es bereits URLs sind, verwende sie direkt
+                    selected_episodes = args.episode
+            except Exception as e:
+                logging.error("Fehler beim Konvertieren der Episodennummern: %s", str(e))
+                selected_episodes = args.episode
+        else:
+            print("Keine Episode angegeben. Verwende Episode 1.")
+            base_url = f"https://aniworld.to/anime/stream/{anime_slug}/staffel-1/episode-"
+            selected_episodes = [f"{base_url}1"]
+            
+        execute_with_params(args, selected_episodes, anime_title, language, anime_slug)
+    except Exception as e:
+        logging.error("Fehler bei der direkten Ausführung: %s", str(e))
+        print(f"Ein Fehler ist aufgetreten: {str(e)}")
 
 
 if __name__ == "__main__":

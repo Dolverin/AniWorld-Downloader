@@ -1157,6 +1157,49 @@ def get_package_manager():
 
 
 def install_packages(package_manager, packages):
+    # Prüfe, ob wir in einer SSH-Sitzung sind
+    is_ssh = os.environ.get('SSH_CLIENT') or os.environ.get('SSH_TTY')
+    has_pkexec = shutil.which('pkexec') is not None
+    
+    # Für yt-dlp versuchen wir zuerst die Installation über pip
+    if packages == ['yt-dlp']:
+        try:
+            logging.info("Versuche yt-dlp über pip zu installieren")
+            subprocess.run(
+                [sys.executable, '-m', 'pip', 'install', 'yt-dlp'],
+                check=True
+            )
+            return
+        except subprocess.SubprocessError as e:
+            logging.error("Fehler beim Installieren von yt-dlp über pip: %s", e)
+    
+    # Wenn wir in einer SSH-Sitzung sind oder pkexec nicht verfügbar ist,
+    # geben wir nur Anweisungen für manuelle Installation aus
+    if is_ssh or not has_pkexec:
+        print(f"Du benötigst administrative Rechte, um {', '.join(packages)} zu installieren.")
+        print(f"Bitte führe folgenden Befehl manuell aus:")
+        
+        if package_manager == 'pacman':
+            print(f"sudo pacman -S --noconfirm {' '.join(packages)}")
+        elif package_manager == 'apt':
+            print(f"sudo apt-get install -y {' '.join(packages)}")
+        elif package_manager == 'dnf':
+            print(f"sudo dnf install -y {' '.join(packages)}")
+        elif package_manager == 'yum':
+            print(f"sudo yum install -y {' '.join(packages)}")
+        elif package_manager == 'emerge':
+            print(f"sudo emerge {' '.join(packages)}")
+        elif package_manager == 'zypper':
+            print(f"sudo zypper install -y {' '.join(packages)}")
+        elif package_manager == 'apk':
+            print(f"sudo apk add {' '.join(packages)}")
+        elif package_manager == 'brew':
+            print(f"brew install {' '.join(packages)}")
+        else:
+            print(f'Paketmanager "{package_manager}" wird nicht unterstützt oder ist unbekannt.')
+        return
+    
+    # Für Desktop-Systeme mit pkexec
     try:
         if package_manager == 'pacman':
             subprocess.run(
@@ -1202,18 +1245,27 @@ def install_packages(package_manager, packages):
             )
         elif package_manager == 'brew':
             msg = (
-                f'Please update "{packages[0]}" manually as it is not currently '
-                'supported yet on MacOS!'
+                f'Bitte aktualisiere "{packages[0]}" manuell, da es derzeit auf MacOS '
+                'nicht unterstützt wird!'
             )
             logging.debug(msg)
             print(msg)
         else:
-            print(f'Package manager "{package_manager}" not supported or unknown.')
-    except subprocess.SubprocessError as e:
-        print(f'Error while installing: {e}')
+            print(f'Paketmanager "{package_manager}" wird nicht unterstützt oder ist unbekannt.')
+    except Exception as e:
+        logging.error("Fehler beim Installieren der Pakete: %s", str(e))
 
 
 def open_terminal_with_command(command):
+    # Wenn wir in einer SSH-Sitzung sind, führe den Befehl direkt aus
+    if os.environ.get('SSH_CLIENT') or os.environ.get('SSH_TTY'):
+        try:
+            subprocess.run(command, shell=True, check=True)
+            return
+        except subprocess.SubprocessError as e:
+            logging.error("Error executing command in SSH session: %s", e)
+            return
+            
     terminal_emulators = [
         ('gnome-terminal', ['gnome-terminal', '--', 'bash', '-c', f'{command}; exec bash']),
         ('xterm', ['xterm', '-hold', '-e', command]),
@@ -1660,7 +1712,7 @@ def install_and_import(package):
         while True:
             print(f'The Package "{package}" is not installed!')
             user_input = input(
-                f'Do you want me to run “pip install {package}” for you?  (Y|N) '
+                f'Do you want me to run "pip install {package}" for you?  (Y|N) '
             ).upper()
             if user_input == "Y":
                 print(f"{package} is installing...")
