@@ -74,6 +74,7 @@ Aniworld-Downloader is currently being rewritten on the `next` branch to be even
 - **Aniskip Integration**: Automatically skip intros and outros.
 - **Syncplay for Group Watching**: Enjoy synchronized anime watching sessions with friends.
 - **Proxy Compatibility**: Set up an HTTP proxy for restricted network environments.
+- **New Provider Fallback**: Automatically switch to a different provider if the selected one is unavailable. Uses optimized priority order (VOE > Vidoza > Streamtape > others) for best streaming quality.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -133,7 +134,7 @@ Aniworld-Downloader is currently being rewritten on the `next` branch to be even
     pip install --upgrade git+https://github.com/phoenixthrush/AniWorld-Downloader.git#egg=aniworld
     ```
 
-- To update, simply rerun the command above. These builds may be unstable, so it’s good to check regularly.
+- To update, simply rerun the command above. These builds may be unstable, so it's good to check regularly.
 
 #### Local Installation
 
@@ -249,7 +250,7 @@ aniworld --episode https://aniworld.to/anime/stream/demon-slayer-kimetsu-no-yaib
 
 ### Example 6: Use an Episode File
 
-You can download episodes listed in a text file. Here’s an example of what the text file (`test.txt`) should look like:
+You can download episodes listed in a text file. Here's an example of what the text file (`test.txt`) should look like:
 
 ```
 # The whole anime
@@ -491,11 +492,11 @@ I previously had support for s.to in a separate branch, but it is now unmaintain
 **Note on Adding s.to Support:**
 - Adding s.to support would not be difficult—it only requires one fewer fetch than Aniworld's current method to access streaming providers. If anyone is interested in contributing to this effort, I would be happy to merge the addition.
 
-There are already other tools that support s.to. For terminal-based viewing of s.to, check out my friend's project called **[gucken](https://github.com/Commandcracker/gucken)**—he’s doing great work there. 
+There are already other tools that support s.to. For terminal-based viewing of s.to, check out my friend's project called **[gucken](https://github.com/Commandcracker/gucken)**—he's doing great work there. 
 
-Regarding Aniworld’s claim of hosting 1,000+ license-free anime, it’s worth noting that they also stream new shows that may require subscriptions elsewhere. Supporting s.to could mean indirectly accessing copyrighted content, such as Netflix originals. As I do not host any content but fetch it directly from streaming providers, I am not liable for any issues arising from downloading anime.
+Regarding Aniworld's claim of hosting 1,000+ license-free anime, it's worth noting that they also stream new shows that may require subscriptions elsewhere. Supporting s.to could mean indirectly accessing copyrighted content, such as Netflix originals. As I do not host any content but fetch it directly from streaming providers, I am not liable for any issues arising from downloading anime.
 
-Feel free to contribute! Any help is appreciated, and I’d be happy to merge in support for s.to or bs.to if it gets added.
+Feel free to contribute! Any help is appreciated, and I'd be happy to merge in support for s.to or bs.to if it gets added.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -509,7 +510,7 @@ Feel free to contribute! Any help is appreciated, and I’d be happy to merge in
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Contributing
-Contributions to AniWorld Downloader are welcome! Your input helps improve the project, whether it’s through:
+Contributions to AniWorld Downloader are welcome! Your input helps improve the project, whether it's through:
 - Reporting bugs
 - Suggesting features
 - Submitting pull requests
@@ -539,9 +540,9 @@ For more details, see the LICENSE file.
 
 ## Support
 
-I’ve received several reports from users experiencing unexpected menu quits. Recently, streaming providers have started blocking IP addresses from downloading. You can bypass this by using a VPN. You might try using the `--use-playwright` option instead, though it's still experimental and may not be very effective. Additionally, run aniworld with the `--debug` flag.
+I've received several reports from users experiencing unexpected menu quits. Recently, streaming providers have started blocking IP addresses from downloading. You can bypass this by using a VPN. You might try using the `--use-playwright` option instead, though it's still experimental and may not be very effective. Additionally, run aniworld with the `--debug` flag.
 
-This will typically reveal a timeout error, indicating the domain couldn’t be reached or another issue.
+This will typically reveal a timeout error, indicating the domain couldn't be reached or another issue.
 
 ### How to Get Help
 If you still need assistance with AniWorld Downloader, you can:
@@ -549,9 +550,9 @@ If you still need assistance with AniWorld Downloader, you can:
 - **File a report** via the [GitHub Issues](https://github.com/phoenixthrush/AniWorld-Downloader/issues) page.
 - **Contact me directly** via email at [contact@phoenixthrush.com](mailto:contact@phoenixthrush.com), on Matrix `@phoenixthrush:matrix.org`, or on Discord `phoenixthrush`.
 
-While I do respond to emails, opening a GitHub issue is preferable, even for installation questions, so others can find solutions too. However, I’m still happy to help via email if you prefer.
+While I do respond to emails, opening a GitHub issue is preferable, even for installation questions, so others can find solutions too. However, I'm still happy to help via email if you prefer.
 
-If you enjoy AniWorld Downloader and want to support the project, please consider starring the repository on GitHub. It’s a small gesture that means a lot and motivates me to keep improving the project.
+If you enjoy AniWorld Downloader and want to support the project, please consider starring the repository on GitHub. It's a small gesture that means a lot and motivates me to keep improving the project.
 
 Thank you for your support and feedback!
 
