@@ -1749,6 +1749,11 @@ def check_if_episode_exists(anime_title, season, episode, language, download_pat
         # Hole eine Instanz der Datenbank
         db = get_db()
         
+        # Wenn gerade eine Indizierung läuft, stattdessen die Dateisystem-Suche verwenden
+        if db.is_currently_indexing():
+            logging.debug("Datenbankindizierung läuft, verwende Dateisystemsuche")
+            return _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path)
+        
         # Überprüfe zunächst, ob wir die Episode in der Datenbank finden können
         if db.episode_exists(anime_title, season, episode, language):
             logging.debug(f"Episode {anime_title} S{season}E{episode} ({language}) in Datenbank gefunden")
@@ -1761,10 +1766,20 @@ def check_if_episode_exists(anime_title, season, episode, language, download_pat
         sanitized_title = sanitize_path(anime_title)
         series_path = os.path.join(download_path, sanitized_title)
         
+        # Prüfen, ob Indizierung gerade läuft
+        if db.is_currently_indexing():
+            logging.debug("Datenbankindizierung läuft bereits, verwende Dateisystemsuche")
+            return _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path)
+        
         # Indiziere Verzeichnisse (nur wenn nötig)
+        new_files = 0
         if os.path.exists(series_path):
-            db.scan_directory(series_path, force_rescan=False)
-        db.scan_directory(download_path, force_rescan=False)
+            new_files += db.scan_directory(series_path, force_rescan=False)
+        
+        # Wenn wir keine neuen Dateien im Serienordner gefunden haben, 
+        # überprüfe auch den allgemeinen Download-Ordner
+        if new_files == 0:
+            db.scan_directory(download_path, force_rescan=False)
         
         # Versuche erneut, die Episode zu finden
         if db.episode_exists(anime_title, season, episode, language):

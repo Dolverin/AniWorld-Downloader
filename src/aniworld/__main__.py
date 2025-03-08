@@ -15,6 +15,8 @@ import textwrap
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import socket
 import colorlog
+from queue import Queue
+import time
 
 import npyscreen
 
@@ -565,28 +567,85 @@ class EpisodeForm(npyscreen.ActionForm):
         self.status_text.value = "Suche nach vorhandenen Episoden..."
         self.display()
         
-        for i, title in enumerate(self.episode_selector.values):
-            # Überprüfen, ob die Episode bereits existiert
-            if title.startswith("[✓] ") or title.startswith("[✗] "):
-                # Bereits markiert, Original-Titel extrahieren
-                original_title = title[4:]
-                season, episode = self.episode_info[original_title]
-            else:
-                # Nicht markiert, Staffel- und Episodennummer aus dem Titel extrahieren
-                season, episode = self.episode_info[title]
-            
-            # Episode im Dateisystem suchen
-            exists = check_if_episode_exists(
-                self.anime_title, 
-                season, 
-                episode, 
-                language, 
-                download_path
-            )
+        # Verwende ein Queue für die Ergebnisse des Hintergrund-Scans
+        result_queue = Queue()
+        
+        # Erstelle einen Thread für die Überprüfung der Episoden
+        def check_episodes_thread():
+            try:
+                for i, title in enumerate(self.episode_selector.values):
+                    # Bei jedem 5. Element UI aktualisieren
+                    if i % 5 == 0:
+                        self.status_text.value = f"Suche nach vorhandenen Episoden... ({i+1}/{len(self.episode_selector.values)})"
+                        self.display()
+                    
+                    # Überprüfen, ob die Episode bereits existiert
+                    if title.startswith("[✓] ") or title.startswith("[✗] "):
+                        # Bereits markiert, Original-Titel extrahieren
+                        original_title = title[4:]
+                        season, episode = self.episode_info[original_title]
+                    else:
+                        # Nicht markiert, Staffel- und Episodennummer aus dem Titel extrahieren
+                        season, episode = self.episode_info[title]
+                    
+                    # Episode im Dateisystem suchen
+                    exists = check_if_episode_exists(
+                        self.anime_title, 
+                        season, 
+                        episode, 
+                        language, 
+                        download_path
+                    )
+                    
+                    # Ergebnis in die Queue schreiben
+                    result_queue.put((i, title, exists))
+                
+                # Signal für Ende
+                result_queue.put(None)
+            except Exception as e:
+                # Bei Fehler Signal senden
+                logging.error(f"Fehler beim Überprüfen von Episoden: {e}")
+                result_queue.put(f"ERROR: {str(e)}")
+        
+        # Thread starten
+        scan_thread = threading.Thread(target=check_episodes_thread, daemon=True)
+        scan_thread.start()
+        
+        # Auf Ergebnisse warten mit Timeout
+        episodes_found = 0
+        start_time = time.time()
+        timeout = 60  # Maximale Wartezeit in Sekunden
+        
+        while True:
+            # Prüfen, ob der Scan zu lange dauert
+            if time.time() - start_time > timeout:
+                self.status_text.value = "Zeitüberschreitung bei der Suche. Versuchen Sie es später erneut."
+                self.display()
+                # Thread beenden lassen und Markierung abbrechen
+                return
+                
+            # Auf Ergebnis mit kurzem Timeout warten, damit die UI nicht blockiert
+            try:
+                result = result_queue.get(timeout=0.1)
+            except:
+                # Timeout bei Queue.get, aber weiter warten
+                continue
+                
+            # Prüfen, ob Ende oder Fehler
+            if result is None:
+                break
+            if isinstance(result, str) and result.startswith("ERROR"):
+                self.status_text.value = f"Fehler: {result[6:]}"
+                self.display()
+                return
+                
+            # Ergebnis verarbeiten
+            i, title, exists = result
             
             # Je nach Vorhandensein markieren
             if exists:
                 self.existing_episodes.append(i)
+                episodes_found += 1
                 if not title.startswith("[✓] "):
                     original_title = title[4:] if title.startswith("[✗] ") else title
                     new_values.append(f"[✓] {original_title}")
@@ -598,15 +657,23 @@ class EpisodeForm(npyscreen.ActionForm):
                     new_values.append(f"[✗] {original_title}")
                 else:
                     new_values.append(title)
+                    
+            # UI aktualisieren für Fortschrittsanzeige
+            if len(new_values) % 5 == 0:
+                self.status_text.value = f"Suche nach vorhandenen Episoden... ({len(new_values)}/{len(self.episode_selector.values)})"
+                self.display()
+        
+        # Warte auf Thread-Ende
+        scan_thread.join(timeout=1.0)
         
         # Aktualisiere die Anzeige
         self.episode_selector.values = new_values
         self.episode_selector.display()
         
         # Status-Nachricht aktualisieren
-        self.status_text.value = f"{len(self.existing_episodes)} von {len(new_values)} Episoden wurden bereits heruntergeladen."
+        self.status_text.value = f"{episodes_found} von {len(new_values)} Episoden wurden bereits heruntergeladen."
         self.display()
-    
+
     def show_only_missing_episodes(self):
         """Filtert die Liste, um nur fehlende Episoden anzuzeigen"""
         if not hasattr(self, 'existing_episodes'):

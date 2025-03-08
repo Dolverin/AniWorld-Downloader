@@ -39,6 +39,7 @@ class EpisodeDatabase:
         self.db_path = get_database_path()
         self.conn = None
         self.cursor = None
+        self.is_indexing = False
         self.connect()
         self.create_tables()
     
@@ -119,88 +120,108 @@ class EpisodeDatabase:
             logging.warning(f"Verzeichnis {directory} existiert nicht und kann nicht gescannt werden")
             return 0
         
-        # Prüfe, wann das Verzeichnis zuletzt gescannt wurde
-        if not force_rescan:
-            self.cursor.execute(
-                "SELECT last_scan FROM scan_history WHERE directory = ?", 
-                (directory,)
-            )
-            result = self.cursor.fetchone()
+        # Setze den Indexierungsstatus
+        self.is_indexing = True
+        
+        try:
+            # Prüfe, wann das Verzeichnis zuletzt gescannt wurde
+            if not force_rescan:
+                self.cursor.execute(
+                    "SELECT last_scan FROM scan_history WHERE directory = ?", 
+                    (directory,)
+                )
+                result = self.cursor.fetchone()
+                
+                if result:
+                    last_scan = result[0]
+                    # Wenn innerhalb der letzten Stunde gescannt und kein force_rescan, überspringe
+                    if time.time() - last_scan < 3600:  # 1 Stunde
+                        logging.debug(f"Verzeichnis {directory} wurde vor weniger als 1 Stunde gescannt, Scan wird übersprungen")
+                        self.is_indexing = False
+                        return 0
             
-            if result:
-                last_scan = result[0]
-                # Wenn innerhalb der letzten Stunde gescannt und kein force_rescan, überspringe
-                if time.time() - last_scan < 3600:  # 1 Stunde
-                    logging.debug(f"Verzeichnis {directory} wurde vor weniger als 1 Stunde gescannt, Scan wird übersprungen")
-                    return 0
-        
-        logging.info(f"Indexiere Episoden in {directory}")
-        
-        # Aktuelle Dateien in der Datenbank für dieses Verzeichnis
-        self.cursor.execute(
-            "SELECT id, file_path, last_modified FROM episode_files WHERE file_path LIKE ?", 
-            (f"{directory}%",)
-        )
-        existing_files = {row['file_path']: (row['id'], row['last_modified']) for row in self.cursor.fetchall()}
-        
-        new_files_count = 0
-        current_time = int(time.time())
-        
-        # Rekursiv alle Dateien im Verzeichnis durchsuchen
-        for root, _, files in os.walk(directory):
-            for file in files:
-                file_path = os.path.join(root, file)
-                
-                try:
-                    # Letzte Änderung der Datei auslesen
-                    file_mtime = int(os.path.getmtime(file_path))
+            logging.info(f"Indexiere Episoden in {directory}")
+            
+            # Aktuelle Dateien in der Datenbank für dieses Verzeichnis
+            self.cursor.execute(
+                "SELECT id, file_path, last_modified FROM episode_files WHERE file_path LIKE ?", 
+                (f"{directory}%",)
+            )
+            existing_files = {row['file_path']: (row['id'], row['last_modified']) for row in self.cursor.fetchall()}
+            
+            new_files_count = 0
+            current_time = int(time.time())
+            
+            # Rekursiv alle Dateien im Verzeichnis durchsuchen
+            for root, _, files in os.walk(directory):
+                logging.debug(f"Durchsuche Verzeichnis: {root} mit {len(files)} Dateien")
+                for file in files:
+                    file_path = os.path.join(root, file)
                     
-                    # Prüfen ob Datei neu oder geändert wurde
-                    if file_path in existing_files:
-                        file_id, db_mtime = existing_files[file_path]
-                        if file_mtime <= db_mtime:
-                            # Datei ist nicht neu und wurde nicht geändert
-                            continue
+                    try:
+                        # Letzte Änderung der Datei auslesen
+                        file_mtime = int(os.path.getmtime(file_path))
                         
-                        # Datei wurde geändert, also vorhandenen Eintrag löschen
-                        self.cursor.execute("DELETE FROM episode_files WHERE id = ?", (file_id,))
+                        # Prüfen ob Datei neu oder geändert wurde
+                        if file_path in existing_files:
+                            file_id, db_mtime = existing_files[file_path]
+                            if file_mtime <= db_mtime:
+                                # Datei ist nicht neu und wurde nicht geändert
+                                continue
+                            
+                            # Datei wurde geändert, also vorhandenen Eintrag löschen
+                            self.cursor.execute("DELETE FROM episode_files WHERE id = ?", (file_id,))
+                        
+                        # Versuche, Anime-Informationen aus dem Dateinamen zu extrahieren
+                        extracted_info = self._parse_filename(file, file_path)
+                        if extracted_info:
+                            title, season, episode, language = extracted_info
+                            
+                            # Neuen Eintrag erstellen
+                            self.cursor.execute('''
+                                INSERT INTO episode_files 
+                                (title, season, episode, language, file_path, file_name, last_modified, indexed_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            ''', (
+                                title, season, episode, language, file_path, file, 
+                                file_mtime, current_time
+                            ))
+                            
+                            new_files_count += 1
+                            if new_files_count % 100 == 0:
+                                logging.debug(f"Bereits {new_files_count} neue Dateien indexiert")
+                                self.conn.commit()  # Zwischenspeichern für große Verzeichnisse
                     
-                    # Versuche, Anime-Informationen aus dem Dateinamen zu extrahieren
-                    extracted_info = self._parse_filename(file, file_path)
-                    if extracted_info:
-                        title, season, episode, language = extracted_info
-                        
-                        # Neuen Eintrag erstellen
-                        self.cursor.execute('''
-                            INSERT INTO episode_files 
-                            (title, season, episode, language, file_path, file_name, last_modified, indexed_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (
-                            title, season, episode, language, file_path, file, 
-                            file_mtime, current_time
-                        ))
-                        
-                        new_files_count += 1
-                        if new_files_count % 100 == 0:
-                            logging.debug(f"Bereits {new_files_count} neue Dateien indexiert")
-                
-                except (OSError, sqlite3.Error) as e:
-                    logging.error(f"Fehler beim Verarbeiten von {file_path}: {e}")
+                    except (OSError, sqlite3.Error) as e:
+                        logging.error(f"Fehler beim Verarbeiten von {file_path}: {e}")
+            
+            # Lösche Einträge für Dateien, die nicht mehr existieren
+            for file_path in existing_files:
+                if not os.path.exists(file_path):
+                    self.cursor.execute("DELETE FROM episode_files WHERE file_path = ?", (file_path,))
+            
+            # Aktualisiere den Scan-Verlauf
+            self.cursor.execute(
+                "INSERT OR REPLACE INTO scan_history (directory, last_scan) VALUES (?, ?)",
+                (directory, current_time)
+            )
+            
+            self.conn.commit()
+            logging.info(f"Indexierung abgeschlossen. {new_files_count} neue Dateien indexiert.")
+            return new_files_count
         
-        # Lösche Einträge für Dateien, die nicht mehr existieren
-        for file_path in existing_files:
-            if not os.path.exists(file_path):
-                self.cursor.execute("DELETE FROM episode_files WHERE file_path = ?", (file_path,))
+        finally:
+            # Setze den Indexierungsstatus zurück
+            self.is_indexing = False
+    
+    def is_currently_indexing(self) -> bool:
+        """
+        Prüft, ob gerade eine Indizierung läuft.
         
-        # Aktualisiere den Scan-Verlauf
-        self.cursor.execute(
-            "INSERT OR REPLACE INTO scan_history (directory, last_scan) VALUES (?, ?)",
-            (directory, current_time)
-        )
-        
-        self.conn.commit()
-        logging.info(f"Indexierung abgeschlossen. {new_files_count} neue Dateien indexiert.")
-        return new_files_count
+        Returns:
+            True wenn eine Indizierung läuft, sonst False
+        """
+        return self.is_indexing
     
     def _parse_filename(self, filename: str, file_path: str) -> Optional[Tuple[str, int, int, str]]:
         """
@@ -317,6 +338,11 @@ class EpisodeDatabase:
         Returns:
             True wenn die Episode existiert, sonst False
         """
+        # Wenn wir gerade indizieren, immer False zurückgeben, um Datenbankblockaden zu vermeiden
+        if self.is_indexing:
+            logging.debug(f"Indexierung läuft, Episode {anime_title} S{season}E{episode} wird als nicht vorhanden markiert")
+            return False
+            
         sanitized_title = sanitize_path(anime_title)
         
         # Normalisiere die Sprache, da sie in verschiedenen Formen gespeichert sein könnte
