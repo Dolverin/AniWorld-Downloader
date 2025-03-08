@@ -6,9 +6,9 @@ import sys
 
 import colorlog
 
-# Temporärer Debug-Modus für die Fehlerdiagnose
-IS_DEBUG_MODE = True
-LOG_FILE_PATH = os.path.join(tempfile.gettempdir(), 'aniworld_debug.log')
+# Debug-Modus wieder auf Umgebungsvariable setzen
+IS_DEBUG_MODE = os.getenv('IS_DEBUG_MODE', 'False').lower() in ('true', '1', 't', 'y', 'yes')
+LOG_FILE_PATH = os.path.join(tempfile.gettempdir(), 'aniworld.log')
 
 DEFAULT_ACTION = "Download"      # E.g. Watch, Download, Syncplay
 DEFAULT_DOWNLOAD_PATH = "/mnt/plexshare"
