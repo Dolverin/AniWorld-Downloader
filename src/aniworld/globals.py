@@ -10,8 +10,8 @@ IS_DEBUG_MODE = os.getenv('IS_DEBUG_MODE', 'False').lower() in ('true', '1', 't'
 LOG_FILE_PATH = os.path.join(tempfile.gettempdir(), 'aniworld.log')
 
 DEFAULT_ACTION = "Download"      # E.g. Watch, Download, Syncplay
-DEFAULT_DOWNLOAD_PATH = os.path.join(os.path.expanduser('~'), 'Downloads')
-DEFAULT_LANGUAGE = "German Sub"  # German Dub, English Sub, German Sub
+DEFAULT_DOWNLOAD_PATH = "/mnt/plexshare"
+DEFAULT_LANGUAGE = "German Dub"  # German Dub, English Sub, German Sub
 DEFAULT_PROVIDER = "VOE"         # Vidoza, Streamtape, VOE, Doodstream
 DEFAULT_PROVIDER_WATCH = "Doodstream"
 DEFAULT_ANISKIP = False
