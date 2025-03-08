@@ -1177,9 +1177,24 @@ def main():
         # Überprüfe, ob ein Download-Pfad konfiguriert ist
         download_path = aniworld_globals.DEFAULT_DOWNLOAD_PATH
         if download_path and os.path.exists(download_path):
-            # Starte einen Hintergrund-Thread für die Indizierung
+            # Starte einen Thread für die Hintergrund-Indizierung mit einer neuen Funktion,
+            # damit die Hauptanwendung nicht blockiert wird
+            def run_background_indexing():
+                try:
+                    import time
+                    # Warte kurz, damit die Hauptanwendung starten kann
+                    time.sleep(1)
+                    logging.info(f"Starte Hintergrund-Indexierung des Download-Ordners: {download_path}")
+                    from aniworld.common.db import get_db
+                    background_db = get_db()  # Eine eigene Instanz für diesen Thread
+                    background_db.scan_directory(download_path)
+                    logging.info("Hintergrund-Indexierung abgeschlossen")
+                except Exception as e:
+                    logging.error(f"Fehler bei der Hintergrund-Indexierung: {e}")
+            
+            # Starte den Thread
             threading.Thread(
-                target=lambda: db.scan_directory(download_path),
+                target=run_background_indexing, 
                 daemon=True,
                 name="DB-Indexer"
             ).start()

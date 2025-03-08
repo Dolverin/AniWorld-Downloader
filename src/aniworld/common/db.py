@@ -6,6 +6,7 @@ import logging
 import sqlite3
 import re
 import time
+import threading
 from typing import List, Dict, Tuple, Optional
 import platform
 
@@ -28,6 +29,81 @@ def get_database_path():
     return os.path.join(base_dir, 'episode_index.db')
 
 
+class ThreadSafeSQLite:
+    """Eine Thread-sichere Wrapper-Klasse für SQLite."""
+    
+    def __init__(self, db_path: str):
+        """
+        Initialisiert den Thread-sicheren SQLite-Wrapper.
+        
+        Args:
+            db_path: Pfad zur SQLite-Datenbank
+        """
+        self.db_path = db_path
+        self.local = threading.local()
+        self.lock = threading.RLock()
+    
+    def get_connection(self):
+        """
+        Gibt eine Thread-lokale Verbindung zurück.
+        Jeder Thread erhält seine eigene Verbindung.
+        
+        Returns:
+            Eine SQLite-Connection für den aktuellen Thread
+        """
+        if not hasattr(self.local, 'conn') or self.local.conn is None:
+            self.local.conn = sqlite3.connect(self.db_path)
+            self.local.conn.row_factory = sqlite3.Row
+        return self.local.conn
+    
+    def execute(self, query: str, params: Tuple = ()):
+        """
+        Führt eine SQL-Abfrage thread-sicher aus.
+        
+        Args:
+            query: SQL-Abfrage
+            params: Parameter für die Abfrage
+            
+        Returns:
+            Cursor-Objekt mit dem Ergebnis
+        """
+        with self.lock:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            return cursor
+    
+    def executemany(self, query: str, params_list: List[Tuple]):
+        """
+        Führt eine SQL-Abfrage mit mehreren Parametersätzen thread-sicher aus.
+        
+        Args:
+            query: SQL-Abfrage
+            params_list: Liste von Parametern für die Abfrage
+            
+        Returns:
+            Cursor-Objekt mit dem Ergebnis
+        """
+        with self.lock:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.executemany(query, params_list)
+            return cursor
+    
+    def commit(self):
+        """Commit der Transaktion im aktuellen Thread."""
+        if hasattr(self.local, 'conn') and self.local.conn is not None:
+            with self.lock:
+                self.local.conn.commit()
+    
+    def close(self):
+        """Schließt die Verbindung im aktuellen Thread."""
+        if hasattr(self.local, 'conn') and self.local.conn is not None:
+            with self.lock:
+                self.local.conn.close()
+                self.local.conn = None
+
+
 class EpisodeDatabase:
     """
     SQLite-Datenbank zur Indexierung von Episodendateien im Dateisystem.
@@ -37,34 +113,16 @@ class EpisodeDatabase:
     def __init__(self):
         """Initialisiert die Datenbankverbindung und erstellt die Tabellen, falls nötig."""
         self.db_path = get_database_path()
-        self.conn = None
-        self.cursor = None
+        self.db = ThreadSafeSQLite(self.db_path)
         self.is_indexing = False
-        self.connect()
         self.create_tables()
-    
-    def connect(self):
-        """Stellt eine Verbindung zur SQLite-Datenbank her."""
-        try:
-            self.conn = sqlite3.connect(self.db_path)
-            self.conn.row_factory = sqlite3.Row  # Liefert Zeilen als dict-ähnliche Objekte
-            self.cursor = self.conn.cursor()
-            logging.debug(f"Verbindung zur Datenbank {self.db_path} hergestellt")
-        except sqlite3.Error as e:
-            logging.error(f"Fehler beim Verbinden zur Datenbank: {e}")
-            raise
-    
-    def close(self):
-        """Schließt die Datenbankverbindung."""
-        if self.conn:
-            self.conn.close()
-            logging.debug("Datenbankverbindung geschlossen")
+        logging.debug(f"Thread-sichere Datenbank initialisiert: {self.db_path}")
     
     def create_tables(self):
         """Erstellt die erforderlichen Tabellen in der Datenbank, falls sie nicht existieren."""
         try:
             # Tabelle für Episodendateien
-            self.cursor.execute('''
+            self.db.execute('''
                 CREATE TABLE IF NOT EXISTS episode_files (
                     id INTEGER PRIMARY KEY,
                     title TEXT NOT NULL,
@@ -79,18 +137,18 @@ class EpisodeDatabase:
             ''')
             
             # Indizes für schnellere Suche
-            self.cursor.execute('''
+            self.db.execute('''
                 CREATE INDEX IF NOT EXISTS idx_episode_search ON episode_files 
                 (title, season, episode, language)
             ''')
             
-            self.cursor.execute('''
+            self.db.execute('''
                 CREATE INDEX IF NOT EXISTS idx_file_path ON episode_files 
                 (file_path)
             ''')
             
             # Tabelle für Scan-Verlauf
-            self.cursor.execute('''
+            self.db.execute('''
                 CREATE TABLE IF NOT EXISTS scan_history (
                     id INTEGER PRIMARY KEY,
                     directory TEXT NOT NULL,
@@ -98,11 +156,10 @@ class EpisodeDatabase:
                 )
             ''')
             
-            self.conn.commit()
+            self.db.commit()
             logging.debug("Datenbanktabellen wurden initialisiert")
         except sqlite3.Error as e:
             logging.error(f"Fehler beim Erstellen der Tabellen: {e}")
-            self.conn.rollback()
             raise
     
     def scan_directory(self, directory: str, force_rescan: bool = False) -> int:
@@ -121,34 +178,37 @@ class EpisodeDatabase:
             return 0
         
         # Setze den Indexierungsstatus
-        self.is_indexing = True
+        thread_id = threading.get_ident()
+        logging.debug(f"DEBUG-SCAN: Thread {thread_id} startet Indizierung von {directory}")
+        
+        # Verwende einen lokalen Indexierungs-Flag für diesen Thread
+        local_indexing = True
         
         try:
             # Prüfe, wann das Verzeichnis zuletzt gescannt wurde
             if not force_rescan:
-                self.cursor.execute(
+                cursor = self.db.execute(
                     "SELECT last_scan FROM scan_history WHERE directory = ?", 
                     (directory,)
                 )
-                result = self.cursor.fetchone()
+                result = cursor.fetchone()
                 
                 if result:
                     last_scan = result[0]
                     # Wenn innerhalb der letzten Stunde gescannt und kein force_rescan, überspringe
                     if time.time() - last_scan < 3600:  # 1 Stunde
-                        logging.debug(f"Verzeichnis {directory} wurde vor weniger als 1 Stunde gescannt, Scan wird übersprungen")
-                        self.is_indexing = False
+                        logging.debug(f"DEBUG-SCAN: Verzeichnis {directory} wurde vor weniger als 1 Stunde gescannt, Scan wird übersprungen")
                         return 0
             
             logging.info(f"DEBUG-SCAN: Starte Indexierung von {directory}")
             
             # Aktuelle Dateien in der Datenbank für dieses Verzeichnis
             try:
-                self.cursor.execute(
+                cursor = self.db.execute(
                     "SELECT id, file_path, last_modified FROM episode_files WHERE file_path LIKE ?", 
                     (f"{directory}%",)
                 )
-                existing_files = {row['file_path']: (row['id'], row['last_modified']) for row in self.cursor.fetchall()}
+                existing_files = {row['file_path']: (row['id'], row['last_modified']) for row in cursor.fetchall()}
                 logging.debug(f"DEBUG-SCAN: {len(existing_files)} bereits indizierte Dateien gefunden")
             except Exception as e:
                 logging.error(f"DEBUG-SCAN: Fehler beim Abfragen vorhandener Dateien: {e}")
@@ -186,7 +246,7 @@ class EpisodeDatabase:
                                 continue
                             
                             # Datei wurde geändert, also vorhandenen Eintrag löschen
-                            self.cursor.execute("DELETE FROM episode_files WHERE id = ?", (file_id,))
+                            self.db.execute("DELETE FROM episode_files WHERE id = ?", (file_id,))
                         
                         # Versuche, Anime-Informationen aus dem Dateinamen zu extrahieren
                         logging.debug(f"DEBUG-SCAN: Analysiere Dateiname: {file}")
@@ -197,7 +257,7 @@ class EpisodeDatabase:
                             
                             # Neuen Eintrag erstellen
                             try:
-                                self.cursor.execute('''
+                                self.db.execute('''
                                     INSERT INTO episode_files 
                                     (title, season, episode, language, file_path, file_name, last_modified, indexed_at)
                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -209,7 +269,7 @@ class EpisodeDatabase:
                                 new_files_count += 1
                                 if new_files_count % 100 == 0:
                                     logging.debug(f"DEBUG-SCAN: Bereits {new_files_count} neue Dateien indexiert")
-                                    self.conn.commit()  # Zwischenspeichern für große Verzeichnisse
+                                    self.db.commit()  # Zwischenspeichern für große Verzeichnisse
                             except sqlite3.Error as e:
                                 logging.error(f"DEBUG-SCAN: Datenbankfehler beim Einfügen von {file_path}: {e}")
                         else:
@@ -225,7 +285,7 @@ class EpisodeDatabase:
                 deleted_count = 0
                 for file_path in existing_files:
                     if not os.path.exists(file_path):
-                        self.cursor.execute("DELETE FROM episode_files WHERE file_path = ?", (file_path,))
+                        self.db.execute("DELETE FROM episode_files WHERE file_path = ?", (file_path,))
                         deleted_count += 1
                 
                 logging.debug(f"DEBUG-SCAN: {deleted_count} nicht mehr existierende Dateien aus dem Index entfernt")
@@ -234,12 +294,12 @@ class EpisodeDatabase:
             
             # Aktualisiere den Scan-Verlauf
             try:
-                self.cursor.execute(
+                self.db.execute(
                     "INSERT OR REPLACE INTO scan_history (directory, last_scan) VALUES (?, ?)",
                     (directory, current_time)
                 )
                 
-                self.conn.commit()
+                self.db.commit()
                 logging.info(f"DEBUG-SCAN: Indexierung abgeschlossen. {new_files_count} neue Dateien indexiert.")
             except Exception as e:
                 logging.error(f"DEBUG-SCAN: Fehler beim Aktualisieren des Scan-Verlaufs: {e}")
@@ -251,9 +311,9 @@ class EpisodeDatabase:
             return 0
         
         finally:
-            # Setze den Indexierungsstatus zurück
-            self.is_indexing = False
-            logging.debug("DEBUG-SCAN: Indizierung abgeschlossen, Status zurückgesetzt")
+            # Setze den lokalen Indexierungsstatus zurück
+            local_indexing = False
+            logging.debug(f"DEBUG-SCAN: Thread {thread_id} hat Indizierung abgeschlossen")
     
     def is_currently_indexing(self) -> bool:
         """
@@ -382,11 +442,6 @@ class EpisodeDatabase:
         Returns:
             True wenn die Episode existiert, sonst False
         """
-        # Wenn wir gerade indizieren, immer False zurückgeben, um Datenbankblockaden zu vermeiden
-        if self.is_indexing:
-            logging.debug(f"Indexierung läuft, Episode {anime_title} S{season}E{episode} wird als nicht vorhanden markiert")
-            return False
-            
         sanitized_title = sanitize_path(anime_title)
         
         # Normalisiere die Sprache, da sie in verschiedenen Formen gespeichert sein könnte
@@ -430,10 +485,13 @@ class EpisodeDatabase:
             params.append(f"%{lang}%")
             
         # Führe die Abfrage aus
-        self.cursor.execute(query, params)
-        result = self.cursor.fetchone()
-        
-        return result is not None
+        try:
+            cursor = self.db.execute(query, params)
+            result = cursor.fetchone()
+            return result is not None
+        except Exception as e:
+            logging.error(f"DEBUG-DB: Fehler bei episode_exists Abfrage: {e}")
+            return False
     
     def get_episode_file(self, anime_title: str, season: int, episode: int, language: str) -> Optional[Dict]:
         """
@@ -492,12 +550,16 @@ class EpisodeDatabase:
             params.append(f"%{lang}%")
             
         # Führe die Abfrage aus
-        self.cursor.execute(query, params)
-        result = self.cursor.fetchone()
-        
-        if result:
-            return dict(result)
-        return None
+        try:
+            cursor = self.db.execute(query, params)
+            result = cursor.fetchone()
+            
+            if result:
+                return dict(result)
+            return None
+        except Exception as e:
+            logging.error(f"DEBUG-DB: Fehler bei get_episode_file Abfrage: {e}")
+            return None
     
     def get_statistics(self) -> Dict:
         """
@@ -508,33 +570,37 @@ class EpisodeDatabase:
         """
         stats = {}
         
-        # Gesamtzahl der indexierten Dateien
-        self.cursor.execute("SELECT COUNT(*) FROM episode_files")
-        stats['total_files'] = self.cursor.fetchone()[0]
-        
-        # Anzahl der Animes
-        self.cursor.execute("SELECT COUNT(DISTINCT title) FROM episode_files")
-        stats['total_anime'] = self.cursor.fetchone()[0]
-        
-        # Größe der Datenbank
-        if os.path.exists(self.db_path):
-            stats['database_size_mb'] = round(os.path.getsize(self.db_path) / (1024 * 1024), 2)
-        else:
-            stats['database_size_mb'] = 0
+        try:
+            # Gesamtzahl der indexierten Dateien
+            cursor = self.db.execute("SELECT COUNT(*) FROM episode_files")
+            stats['total_files'] = cursor.fetchone()[0]
             
-        # Letzte Indizierung
-        self.cursor.execute("SELECT MAX(last_scan) FROM scan_history")
-        last_scan = self.cursor.fetchone()[0]
-        stats['last_indexed'] = last_scan if last_scan else 0
-        
-        return stats
+            # Anzahl der Animes
+            cursor = self.db.execute("SELECT COUNT(DISTINCT title) FROM episode_files")
+            stats['total_anime'] = cursor.fetchone()[0]
+            
+            # Größe der Datenbank
+            if os.path.exists(self.db_path):
+                stats['database_size_mb'] = round(os.path.getsize(self.db_path) / (1024 * 1024), 2)
+            else:
+                stats['database_size_mb'] = 0
+                
+            # Letzte Indizierung
+            cursor = self.db.execute("SELECT MAX(last_scan) FROM scan_history")
+            last_scan = cursor.fetchone()[0]
+            stats['last_indexed'] = last_scan if last_scan else 0
+            
+            return stats
+        except Exception as e:
+            logging.error(f"DEBUG-DB: Fehler beim Abrufen der Statistiken: {e}")
+            return {'error': str(e)}
     
     def maintenance(self):
         """Führt Wartungsarbeiten an der Datenbank durch (Vacuum, Reindex, etc.)."""
         try:
             logging.info("Führe Datenbankwartung durch...")
-            self.cursor.execute("VACUUM")
-            self.cursor.execute("ANALYZE")
+            self.db.execute("VACUUM")
+            self.db.execute("ANALYZE")
             logging.info("Datenbankwartung abgeschlossen")
         except sqlite3.Error as e:
             logging.error(f"Fehler bei der Datenbankwartung: {e}")
