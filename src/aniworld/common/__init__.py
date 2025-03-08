@@ -41,3 +41,6 @@ from .common import (
 
 from .ascii_art import display_ascii_art
 from .adventure import adventure
+
+# Importiere die neue Datenbankfunktionalität
+from aniworld.common.db import get_db

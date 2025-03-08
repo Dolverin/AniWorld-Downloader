@@ -13,6 +13,8 @@ import random
 import signal
 import textwrap
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import socket
+import colorlog
 
 import npyscreen
 
@@ -1024,6 +1026,55 @@ def get_anime_title(args):
 
 
 def main():
+    # Globale Variablen
+    global DEFAULT_PROVIDER
+    global DEFAULT_LANGUAGE
+    global DEFAULT_DOWNLOAD_PATH
+    global DEFAULT_PROVIDER_WATCH
+
+    # Setze Zeitlimit für Anfragen
+    socket.setdefaulttimeout(30)
+
+    # Installiere Log-Handler
+    log_handler = colorlog.StreamHandler()
+    log_handler.setFormatter(colorlog.ColoredFormatter(
+        '%(log_color)s%(levelname)s:%(message)s',
+        log_colors=aniworld_globals.log_colors))
+
+    # Logging konfigurieren
+    if aniworld_globals.IS_DEBUG_MODE:
+        file_handler = aniworld_globals.setup_file_handler()
+        logger = logging.getLogger()
+        logger.setLevel(logging.DEBUG)
+        logger.addHandler(file_handler)
+        logger.addHandler(log_handler)
+        # Warnung über Debug-Modus anzeigen
+        logging.warning("DEBUG-Modus ist aktiviert! Logs werden in %s gespeichert.", aniworld_globals.LOG_FILE_PATH)
+    else:
+        logging.basicConfig(level=logging.INFO, handlers=[log_handler])
+
+    logging.getLogger('requests').setLevel(logging.WARNING)
+    
+    # Initialisiere die Episoden-Datenbank und starte eine Hintergrund-Indizierung
+    try:
+        from aniworld.common.db import get_db
+        db = get_db()
+        
+        # Überprüfe, ob ein Download-Pfad konfiguriert ist
+        download_path = aniworld_globals.DEFAULT_DOWNLOAD_PATH
+        if download_path and os.path.exists(download_path):
+            # Starte einen Hintergrund-Thread für die Indizierung
+            threading.Thread(
+                target=lambda: db.scan_directory(download_path),
+                daemon=True,
+                name="DB-Indexer"
+            ).start()
+            logging.info(f"Hintergrund-Indexierung des Download-Ordners gestartet: {download_path}")
+        else:
+            logging.info("Kein gültiger Download-Pfad konfiguriert, Indexierung wird übersprungen")
+    except Exception as e:
+        logging.warning(f"Episoden-Datenbank konnte nicht initialisiert werden: {e}")
+        
     logging.debug("============================================")
     logging.debug("Welcome to Aniworld!")
     logging.debug("============================================\n")
@@ -1034,6 +1085,8 @@ def main():
         adventure()
 
         sys.exit()
+
+    # Argumente parsen
     try:
         args = parse_arguments()
         logging.debug("Parsed arguments: %s", args)

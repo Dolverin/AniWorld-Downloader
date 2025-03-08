@@ -1729,7 +1729,65 @@ def install_and_import(package):
 def check_if_episode_exists(anime_title, season, episode, language, download_path):
     """
     Prüft, ob eine Episode bereits im Download-Verzeichnis existiert.
-    Durchsucht rekursiv alle Unterordner.
+    Nutzt zunächst den Datenbankindex für eine schnelle Suche, und führt
+    nur wenn nötig eine vollständige Dateisystemsuche durch.
+    
+    Args:
+        anime_title (str): Der Titel des Animes
+        season (int): Staffelnummer
+        episode (int): Episodennummer
+        language (str): Sprachversion (German Dub, English Sub, German Sub)
+        download_path (str): Der Basis-Downloadpfad
+        
+    Returns:
+        bool: True, wenn die Episode existiert, sonst False
+    """
+    try:
+        # Importiere die Datenbankfunktionalität lokal, um zirkuläre Importe zu vermeiden
+        from aniworld.common.db import get_db
+        
+        # Hole eine Instanz der Datenbank
+        db = get_db()
+        
+        # Überprüfe zunächst, ob wir die Episode in der Datenbank finden können
+        if db.episode_exists(anime_title, season, episode, language):
+            logging.debug(f"Episode {anime_title} S{season}E{episode} ({language}) in Datenbank gefunden")
+            return True
+            
+        # Wenn nicht in der Datenbank, aktualisiere den Index für diesen Ordner
+        logging.debug(f"Episode nicht im Index gefunden, durchsuche Dateisystem in {download_path}")
+        
+        # Pfad zum Ordner der Serie
+        sanitized_title = sanitize_path(anime_title)
+        series_path = os.path.join(download_path, sanitized_title)
+        
+        # Indiziere Verzeichnisse (nur wenn nötig)
+        if os.path.exists(series_path):
+            db.scan_directory(series_path, force_rescan=False)
+        db.scan_directory(download_path, force_rescan=False)
+        
+        # Versuche erneut, die Episode zu finden
+        if db.episode_exists(anime_title, season, episode, language):
+            logging.debug(f"Episode {anime_title} S{season}E{episode} ({language}) nach Indizierung gefunden")
+            return True
+                
+        logging.debug(f"Episode {anime_title} S{season}E{episode} ({language}) wurde nicht gefunden")
+        return False
+        
+    except ImportError as e:
+        # Fallback zur alten Methode, wenn die DB nicht verfügbar ist
+        logging.warning(f"Datenbankindex nicht verfügbar: {e}, verwende Dateisystemsuche...")
+        return _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path)
+    except Exception as e:
+        # Bei Datenbankproblemen zur alten Methode zurückfallen
+        logging.error(f"Fehler bei der Datenbanksuche: {e}, verwende Dateisystemsuche...")
+        return _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path)
+
+
+def _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path):
+    """
+    Prüft mit der alten Methode über das Dateisystem, ob eine Episode existiert.
+    Wird als Fallback verwendet, wenn die Datenbanksuche nicht funktioniert.
     
     Args:
         anime_title (str): Der Titel des Animes
