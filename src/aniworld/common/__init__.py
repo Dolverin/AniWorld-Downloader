@@ -44,3 +44,30 @@ from .adventure import adventure
 
 # Importiere die neue Datenbankfunktionalität
 from aniworld.common.db import get_db
+
+# Import für Tor-Funktionalität
+try:
+    from aniworld.common.tor_client import get_tor_client, TorClient
+except ImportError:
+    # Fehlende Tor-Bibliotheken werden bei Bedarf zur Laufzeit gemeldet
+    pass
+
+def get_tor_version() -> str:
+    """Gibt die Tor-Version zurück, wenn Tor verfügbar ist."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["tor", "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False
+        )
+        if result.returncode == 0:
+            # Format: "Tor version X.Y.Z."
+            version_line = result.stdout.strip().split('\n')[0]
+            if "version" in version_line:
+                return version_line.split("version")[1].strip().rstrip(".")
+        return "nicht verfügbar"
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return "nicht installiert"

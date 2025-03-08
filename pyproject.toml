@@ -20,6 +20,8 @@ dependencies = [
     'py7zr',
     'packaging',
     'yt-dlp',
+    'PySocks',
+    'stem',
     'windows-curses; platform_system == "Windows"'
 ]
 classifiers = [

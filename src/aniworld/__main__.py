@@ -986,6 +986,11 @@ def parse_arguments():
         action='store_true',
         help='Bypass fetching with a headless browser using Playwright instead (EXPERIMENTAL!!!)'
     )
+    misc_group.add_argument(
+        '-t', '--use-tor',
+        action='store_true',
+        help='Verwende Tor-Netzwerk für Anonymität und zum Umgehen von IP-Blockierungen'
+    )
 
     args = parser.parse_args()
 
@@ -1067,6 +1072,11 @@ def parse_arguments():
         os.environ['HTTPS_PROXY'] = args.proxy
         aniworld_globals.DEFAULT_PROXY = args.proxy
         logging.debug("Proxy set to: %s", args.proxy)
+        
+    if args.use_tor:
+        os.environ['USE_TOR'] = 'True'
+        aniworld_globals.USE_TOR = True
+        logging.info("Tor-Netzwerk wird verwendet für anonyme Verbindungen")
 
     if args.anime4k:
         setup_anime4k(args.anime4k)

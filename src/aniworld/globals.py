@@ -23,6 +23,11 @@ DEFAULT_PROXY = None
 DEFAULT_USE_PLAYWRIGHT = False
 DEFAULT_TERMINAL_SIZE = (90, 38)
 
+# Tor-Konfiguration
+USE_TOR = os.getenv('USE_TOR', 'False').lower() in ('true', '1', 't', 'y', 'yes')
+TOR_AUTO_RETRY = True  # Automatisch neue IP holen, wenn IP gesperrt
+TOR_MAX_RETRIES = 3    # Maximale Anzahl an Versuchen mit neuer IP
+
 # Priorisierte Liste der Provider gemäß Empfehlung:
 # VOE > Vidoza > Streamtape > andere
 PROVIDER_PRIORITY = [

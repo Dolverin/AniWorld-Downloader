@@ -5,11 +5,12 @@ import platform
 import hashlib
 import logging
 import time
+import sys
 from typing import Dict, List, Optional, Any
 
 from bs4 import BeautifulSoup
 
-from aniworld.globals import PROVIDER_PRIORITY
+from aniworld.globals import PROVIDER_PRIORITY, DEFAULT_DOWNLOAD_PATH, USE_TOR
 from aniworld.common import (
     clean_up_leftovers,
     execute_command,
@@ -364,106 +365,170 @@ def handle_watch_action(  # pylint: disable=too-many-arguments, too-many-positio
 
 def handle_download_action(params: Dict[str, Any]) -> None:
     logging.debug("Action is Download")
-    check_dependencies(["yt-dlp"])
-    sanitize_anime_title = sanitize_path(params['anime_title'])
-
+    
+    # Funktion für die Übersetzung der Sprachkodes
     def get_language_from_key(key: int) -> str:
         key_mapping = {
             1: "German Dub",
             2: "English Sub",
             3: "German Sub"
         }
-
+        
         language = key_mapping.get(key, "Unknown Key")
-
+        
         if language == "Unknown Key":
             raise ValueError("Key not valid.")
-
-        return language
-
-    output_directory = os.getenv("OUTPUT_DIRECTORY") or params['output_directory']
-    seasons = params['season_number']
-    episodes = params['episode_number']
-    if seasons:
-        if seasons < 10:
-            seasons = "00" + str(seasons)
-        elif 10 <= seasons < 100:
-            seasons = "0" + str(seasons)
-    if episodes < 10:
-        episodes = "00" + str(episodes)
-    elif 10 <= episodes < 100:
-        episodes = "0" + str(episodes)
-
-    file_name = (
-        f"{sanitize_anime_title} - S{seasons}E{episodes}"
-        if params['season_number']
-        else f"{sanitize_anime_title} - Movie {episodes}"
-    )
-
-    file_path = os.path.join(
-        output_directory,
-        sanitize_anime_title,
-        f"{file_name} ({get_language_from_key(int(params['language']))}).mp4"
-    )
-
-    if not params['only_command']:
-        msg = f"Downloading to '{file_path}'"
-        if not platform.system() == "Windows":
-            print(msg)
-        else:
-            print_progress_info(msg)
-    command = build_yt_dlp_command(params['link'], file_path, params['provider'])
-    logging.debug("Executing command: %s", command)
-    
-    # Variablen für Download-Statistiken
-    download_start_time = time.time()
-    download_status = "completed"
-    download_speed = None
-    file_size = None
-    download_duration = None
-    
-    try:
-        execute_command(command, params['only_command'])
-        
-        # Download erfolgreich abgeschlossen, Statistiken erfassen
-        download_end_time = time.time()
-        download_duration = download_end_time - download_start_time
-        
-        # Dateigröße ermitteln, falls die Datei existiert
-        if os.path.exists(file_path):
-            file_size = os.path.getsize(file_path)
-            # Durchschnittsgeschwindigkeit berechnen (Bytes/Sekunde)
-            if download_duration > 0:
-                download_speed = file_size / download_duration
-        
-    except KeyboardInterrupt:
-        logging.debug("KeyboardInterrupt encountered, cleaning up leftovers")
-        clean_up_leftovers(os.path.dirname(file_path))
-        download_status = "cancelled"
-    except Exception as e:
-        logging.error(f"Download-Fehler: {e}")
-        download_status = "failed"
-    finally:
-        # Download-Statistiken in der Datenbank speichern
-        try:
-            from aniworld.common.db import get_db
-            db = get_db()
             
-            # Original-Staffel- und Episodennummern für die DB verwenden
-            db.save_download_stats(
-                anime_title=params['anime_title'],
-                season=params['season_number'],
-                episode=params['episode_number'],
-                language=get_language_from_key(int(params['language'])),
-                provider=params['provider'],
-                download_speed=download_speed,
-                file_size=file_size,
-                download_duration=download_duration,
-                status=download_status
+        return language
+    
+    # Initialisiere Variablen für Download-Statistiken
+    download_speed = 0.0
+    file_size = 0
+    download_duration = 0.0
+    download_status = "completed"  # Standardstatus
+    
+    # Download-Startzeit
+    download_start_time = time.time()
+    
+    download_path = os.path.expanduser(DEFAULT_DOWNLOAD_PATH)
+    direct_link = params['direct_link']
+    logging.debug("Direct link: %s", direct_link)
+
+    # Verzeichnis erstellen, falls es nicht existiert
+    os.makedirs(download_path, exist_ok=True)
+
+    if not os.path.isdir(download_path):
+        logging.critical("Download path %s is not a directory", download_path)
+        sys.exit(1)
+
+    anime_title = params['anime_title']
+    logging.debug("Anime title: %s", anime_title)
+
+    sanitized_anime_title = sanitize_path(anime_title)
+    anime_dir = os.path.join(download_path, sanitized_anime_title)
+    os.makedirs(anime_dir, exist_ok=True)
+
+    selected_provider = params['provider']
+    language = get_language_string(int(params['language']))
+    logging.debug("Selected provider: %s language: %s", selected_provider, language)
+
+    if params['season_title'] and params['episode_title']:
+        season_title = params['season_title']
+        episode_title = params['episode_title']
+    else:
+        season_number = int(params['season_number'])
+        episode_number = int(params['episode_number'])
+        season_title = f"Staffel {season_number}"
+        episode_title = f"Folge {episode_number}"
+
+    logging.debug("Season title: %s, Episode title: %s", season_title, episode_title)
+
+    file_name = f"{sanitized_anime_title} - {season_title} - {episode_title} [{language}].mp4"
+    file_path = os.path.join(anime_dir, file_name)
+    logging.debug("File path: %s", file_path)
+
+    # Überprüfen, ob die Datei bereits existiert
+    if os.path.exists(file_path) and not params['force_download']:
+        if params['only_direct_link']:
+            print(direct_link)
+        elif params['only_command']:
+            print(" ".join(
+                build_yt_dlp_command(direct_link, file_path, selected_provider))
             )
-            logging.debug(f"Download-Statistik erfasst: Status={download_status}, Dauer={download_duration:.2f}s, Größe={file_size or 'unbekannt'}")
-        except Exception as e:
-            logging.error(f"Fehler beim Speichern der Download-Statistik: {e}")
+        elif os.path.getsize(file_path) > 0:  # Datei existiert und ist nicht leer
+            logging.info("Datei existiert bereits: %s", file_path)
+            print_progress_info(f"Datei existiert bereits: '{file_path}'")
+            download_status = "skipped"
+        else:  # Datei existiert aber ist leer (möglicherweise abgebrochener Download)
+            logging.warning("Leere Datei gefunden, starte Download neu: %s", file_path)
+            os.remove(file_path)  # Leere Datei entfernen
+            command = build_yt_dlp_command(direct_link, file_path, selected_provider)
+            try:
+                execute_command(command, params['only_command'])
+            except KeyboardInterrupt:
+                logging.debug("KeyboardInterrupt encountered, cleaning up leftovers")
+                clean_up_leftovers(os.path.dirname(file_path))
+                download_status = "cancelled"
+            except Exception as e:
+                logging.error(f"Download-Fehler: {e}")
+                download_status = "failed"
+    else:
+        command = build_yt_dlp_command(direct_link, file_path, selected_provider)
+        
+        max_download_attempts = 3 if USE_TOR else 1
+        download_attempt = 0
+        success = False
+        
+        while download_attempt < max_download_attempts and not success:
+            try:
+                if download_attempt > 0:
+                    logging.info(f"Download-Wiederholungsversuch {download_attempt}/{max_download_attempts-1}")
+                    
+                    # Bei Tor-Nutzung eine neue IP-Adresse anfordern
+                    if USE_TOR:
+                        try:
+                            from aniworld.common.tor_client import get_tor_client
+                            tor_client = get_tor_client(use_tor=True)
+                            tor_client.new_identity()
+                            logging.info("Neue Tor-IP für Download-Wiederholungsversuch angefordert")
+                        except ImportError:
+                            logging.error("Tor-Unterstützung ist nicht verfügbar. Stelle sicher, dass die PySocks und stem Module installiert sind.")
+                        except Exception as e:
+                            logging.error(f"Fehler beim Wechseln der Tor-IP: {e}")
+                
+                execute_command(command, params['only_command'])
+                
+                # Download erfolgreich abgeschlossen, Statistiken erfassen
+                download_end_time = time.time()
+                download_duration = download_end_time - download_start_time
+                
+                # Dateigröße ermitteln, falls die Datei existiert
+                if os.path.exists(file_path):
+                    file_size = os.path.getsize(file_path)
+                    # Durchschnittsgeschwindigkeit berechnen (Bytes/Sekunde)
+                    if download_duration > 0:
+                        download_speed = file_size / download_duration
+                
+                success = True
+                download_status = "completed"
+                
+            except KeyboardInterrupt:
+                logging.debug("KeyboardInterrupt encountered, cleaning up leftovers")
+                clean_up_leftovers(os.path.dirname(file_path))
+                download_status = "cancelled"
+                break
+                
+            except Exception as e:
+                logging.error(f"Download-Fehler: {e}")
+                download_status = "failed"
+                download_attempt += 1
+                
+                # Wenn weitere Versuche möglich sind, kurz warten
+                if download_attempt < max_download_attempts:
+                    time.sleep(2)
+                else:
+                    logging.error(f"Maximale Anzahl an Download-Versuchen ({max_download_attempts}) erreicht.")
+    
+    # Download-Statistiken in der Datenbank speichern
+    try:
+        from aniworld.common.db import get_db
+        db = get_db()
+        
+        # Original-Staffel- und Episodennummern für die DB verwenden
+        db.save_download_stats(
+            anime_title=params['anime_title'],
+            season=params['season_number'],
+            episode=params['episode_number'],
+            language=get_language_from_key(int(params['language'])),
+            provider=params['provider'],
+            download_speed=download_speed,
+            file_size=file_size,
+            download_duration=download_duration,
+            status=download_status
+        )
+        logging.debug(f"Download-Statistik erfasst: Status={download_status}, Dauer={download_duration:.2f}s, Größe={file_size or 'unbekannt'}")
+    except Exception as e:
+        logging.error(f"Fehler beim Speichern der Download-Statistik: {e}")
     
     logging.debug("yt-dlp has finished.\nBye bye!")
     if not platform.system() == "Windows":
