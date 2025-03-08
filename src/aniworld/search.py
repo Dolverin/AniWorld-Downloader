@@ -2,6 +2,7 @@ import html
 import logging
 import os
 import webbrowser
+import time
 
 from typing import List, Dict, Optional
 from json import loads
@@ -62,6 +63,12 @@ def search_by_query(query: str) -> str:
         clear_screen()
         if not query:
             print(display_ascii_art())
+            
+            # Platzhalter für die Indexierungslogs - warte 1 Sekunde
+            print("Lade Medien-Index... (bitte warten)")
+            time.sleep(1)  # Warte 1 Sekunde damit die Indexierungslogs erscheinen können
+            print("\033[A\033[K", end="")  # Terminal-Sequenz, um die letzte Zeile zu löschen
+            
             query = input("Search for a series: ")
             if query.lower().strip() == "boku no piko":
                 show_messagebox("This is not on aniworld...\nThank god...", "Really?...", "info")
