@@ -358,8 +358,9 @@ class EpisodeForm(npyscreen.ActionForm):
         self.action_selector.when_value_edited = self.update_directory_visibility
         logging.debug("Set update_directory_visibility as callback for action_selector")
 
-        # Original-Episode-Liste speichern für Filteroperationen
+        # Original-Episode-Liste und Map speichern für Filteroperationen
         self.original_episode_list = episode_list.copy()
+        self.original_episode_map = self.episode_map.copy()
         
         # Initialisiere Tor-Info und starte regelmäßige Updates
         self.update_tor_info()
