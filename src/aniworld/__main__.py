@@ -121,252 +121,43 @@ class EpisodeForm(npyscreen.ActionForm):
         
         # Speichern der Anime-Information für spätere Verwendung
         self.anime_slug = anime_slug
-
-        def process_url(url):
-            logging.debug("Processing URL: %s", url)
-            season, episode = get_season_and_episode_numbers(url)
-            title = (
-                f"{anime_season_title} - Season {season} - Episode {episode}"
-                if season > 0
-                else f"{anime_season_title} - Movie {episode}"
-            )
-            return (season, episode, title, url)
-
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            future_to_url = {executor.submit(process_url, url): url for url in season_data}
-
-            results = []
-            for future in as_completed(future_to_url):
-                try:
-                    result = future.result(timeout=5)  # Timeout for future result
-                    results.append(result)
-                    logging.debug("Processed result: %s", result)
-                except TimeoutError as e:
-                    logging.error("Timeout processing %s: %s", future_to_url[future], e)
-
-        sorted_results = sorted(
-            results,
-            key=lambda x: (x[0] if x[0] > 0 else 999, x[1])
-        )
-
-        # Episoden nach Staffeln gruppieren
-        self.seasons_map = {}
-        for season, episode, title, url in sorted_results:
-            if season not in self.seasons_map:
-                self.seasons_map[season] = []
-            self.seasons_map[season].append((episode, title))
-            
-        # Speichern der Original-Infos für jede Episode (Staffel, Episode)
-        self.episode_info = {}
-        for season, episode, title, url in sorted_results:
-            self.episode_info[title] = (season, episode)
-
-        season_episode_map = {title: url for _, _, title, url in sorted_results}
-        self.episode_map = season_episode_map
-
-        episode_list = list(self.episode_map.keys())
-        logging.debug("Episode list: %s", episode_list)
-
-        self.action_selector = self.add(
-            npyscreen.TitleSelectOne,
-            name="Action",
-            values=["Watch", "Download", "Syncplay"],
-            max_height=4,
-            value=[["Watch", "Download", "Syncplay"].index(aniworld_globals.DEFAULT_ACTION)],
-            scroll_exit=True
-        )
-        logging.debug("Action selector created")
-
-        self.aniskip_selector = self.add(
-            npyscreen.TitleSelectOne,
-            name="Aniskip",
-            values=["Enable", "Disable"],
-            max_height=3,
-            value=[0 if aniworld_globals.DEFAULT_ANISKIP else 1],
-            scroll_exit=True
-        )
-        logging.debug("Aniskip selector created")
-
-        self.directory_field = self.add(
-            npyscreen.TitleFilenameCombo,
-            name="Directory:",
-            value=aniworld_globals.DEFAULT_DOWNLOAD_PATH
-        )
-        logging.debug("Directory field created")
-
-        self.language_selector = self.add(
-            npyscreen.TitleSelectOne,
-            name="Language",
-            values=["German Dub", "English Sub", "German Sub"],
-            max_height=4,
-            value=[
-                ["German Dub", "English Sub", "German Sub"].index(
-                    aniworld_globals.DEFAULT_LANGUAGE
-                )
-            ],
-            scroll_exit=True
-        )
-        logging.debug("Language selector created")
-
-        # Event-Handler für Sprachänderung hinzufügen
-        self.language_selector.when_value_edited = self.filter_episodes_by_language
-
-        self.provider_selector = self.add(
-            npyscreen.TitleSelectOne,
-            name="Provider",
-            values=[
-                "VOE",
-                "Vidmoly",
-                "Doodstream",
-                "SpeedFiles",
-                "Vidoza"
-            ],
-            max_height=6,
-            value=[
-                [
-                    "VOE",
-                    "Vidmoly",
-                    "Doodstream",
-                    "SpeedFiles",
-                    "Vidoza"
-                ].index(aniworld_globals.DEFAULT_PROVIDER)
-            ],
-            scroll_exit=True
-        )
-
-        logging.debug("Provider selector created")
         
-        # Tor-Kontrollbereich hinzufügen
-        self.tor_label = self.add(
-            npyscreen.TitleFixedText,
-            name="Tor-Netzwerk:",
-            value="Initialisiere...",
-            editable=False
-        )
+        # Spalten-Layout für die UI
+        # Teile die Bildschirmbreite in zwei Bereiche: Hauptbereich und Ausgabebereich
+        screen_width = self.curses_pad.getmaxyx()[1]
+        main_width = int(screen_width * 0.7)  # 70% für Hauptbereich
         
-        self.tor_selector = self.add(
-            npyscreen.TitleSelectOne,
-            name="Tor Status:",
-            values=["Aktivieren", "Deaktivieren"],
-            max_height=3,
-            value=[0 if aniworld_globals.USE_TOR else 1],
-            scroll_exit=True
+        # Log-Fenster für Ausgaben auf der rechten Seite
+        self.log_display = self.add(
+            npyscreen.BoxTitle,
+            name="Ausgaben",
+            relx=main_width + 1,  # X-Position: rechts neben dem Hauptbereich
+            rely=1,  # Y-Position: oben
+            max_width=screen_width - main_width - 2,  # Breite: Rest des Bildschirms
+            max_height=15,  # Höhe: 15 Zeilen
+            editable=False,
+            color="CAUTIONHL"
         )
+        self.log_display.values = ["Willkommen bei AniWorld-Downloader"]
         
-        # Event-Handler für Tor-Status-Änderung
-        self.tor_selector.when_value_edited = self.update_tor_status
+        # Eigener Logger für UI-Ausgaben
+        self.ui_logger = logging.getLogger('ui')
+        # Handler hinzufügen, der Meldungen an unser Log-Fenster sendet
+        handler = logging.Handler()
+        handler.emit = self.log_to_ui
+        self.ui_logger.addHandler(handler)
+        self.ui_logger.setLevel(logging.INFO)
         
-        self.tor_ip_text = self.add(
-            npyscreen.TitleFixedText,
-            name="Aktuelle IP:",
-            value="Wird abgerufen...",
-            editable=False
-        )
-        
-        self.tor_identity_button = self.add(
-            npyscreen.ButtonPress,
-            name="Neue Tor-Identität anfordern",
-            when_pressed_function=self.request_new_tor_identity,
-            max_height=1,
-            scroll_exit=True
-        )
-        
-        # Status-Text für Benachrichtigungen hinzufügen
-        self.status_text = self.add(
-            npyscreen.TitleFixedText,
-            name="Status:",
-            value="",
-            editable=False
-        )
-
-        self.episode_selector = self.add(
-            npyscreen.TitleMultiSelect,
-            name="Episode Selection",
-            values=episode_list,
-            max_height=6,
-            scroll_exit=True
-        )
-        logging.debug("Episode selector created with %s episodes", len(episode_list))
-        
-        # Dropdown für Staffelauswahl
-        self.season_selector = self.add(
-            npyscreen.TitleSelectOne, 
-            name="Staffel auswählen:",
-            values=["Staffel " + str(season) if season > 0 else "Filme" for season in sorted(self.seasons_map.keys())],
-            max_height=4,
-            scroll_exit=True
-        )
-        
-        # Button zum Markieren vorhandener Episoden
-        self.mark_existing_button = self.add(
-            npyscreen.ButtonPress,
-            name="Vorhandene Episoden markieren",
-            max_height=1,
-            when_pressed_function=self.mark_existing_episodes,
-            scroll_exit=True
-        )
-        
-        # Button zum Filtern und Anzeigen nur fehlender Episoden
-        self.filter_missing_button = self.add(
-            npyscreen.ButtonPress,
-            name="Nur fehlende Episoden anzeigen",
-            max_height=1,
-            when_pressed_function=self.show_only_missing_episodes,
-            scroll_exit=True
-        )
-        
-        # Button zum Auswählen aller fehlenden Episoden
-        self.select_missing_button = self.add(
-            npyscreen.ButtonPress,
-            name="Alle fehlenden Episoden auswählen",
-            max_height=1,
-            when_pressed_function=self.select_all_missing_episodes,
-            scroll_exit=True
-        )
-        
-        # Button zum Auswählen aller Episoden einer Staffel
-        self.select_season_button = self.add(
-            npyscreen.ButtonPress,
-            name="Alle Episoden dieser Staffel auswählen",
-            max_height=1,
-            when_pressed_function=self.select_season_episodes,
-            scroll_exit=True
-        )
-
-        # Button zum Auswählen aller Episoden hinzufügen
-        self.select_all_button = self.add(
-            npyscreen.ButtonPress,
-            name="Alle Episoden auswählen",
-            max_height=1,
-            when_pressed_function=self.select_all_episodes,
-            scroll_exit=True
-        )
-
-        self.display_text = False
-        
-        # Automatisch nach vorhandenen Episoden suchen
-        threading.Timer(0.5, self.mark_existing_episodes).start()
-
-        self.toggle_button = self.add(
-            npyscreen.ButtonPress,
-            name="Description",
-            max_height=1,
-            when_pressed_function=self.go_to_second_form,
-            scroll_exit=True
-        )
-
-        self.action_selector.when_value_edited = self.update_directory_visibility
-        logging.debug("Set update_directory_visibility as callback for action_selector")
-
-        # Original-Episode-Liste und Map speichern für Filteroperationen
-        self.original_episode_list = episode_list.copy()
-        self.original_episode_map = self.episode_map.copy()
-        
-        # Initialisiere Tor-Info und starte regelmäßige Updates
-        self.update_tor_info()
-        self.start_tor_info_update_timer()
-        
-        self.display()
+    def log_to_ui(self, record):
+        """Fügt eine Log-Nachricht zum UI-Log-Fenster hinzu"""
+        message = record.getMessage()
+        if self.log_display and hasattr(self.log_display, 'values'):
+            # Begrenze die Anzahl der Einträge auf 50
+            if len(self.log_display.values) > 50:
+                self.log_display.values = self.log_display.values[-49:]
+            self.log_display.values.append(message)
+            self.log_display.display()
+        return True
 
     def setup_signal_handling(self):
         def signal_handler(_signal_number, _frame):
@@ -1171,75 +962,35 @@ class EpisodeForm(npyscreen.ActionForm):
             self.tor_ip_text.value = "IP wird abgerufen..."
             self.display()
             
-            # Thread für IP-Abfrage definieren
-            def update_ip_thread():
+            # IP direkt im Hauptthread abfragen, ohne MAINLOOP zu verwenden
+            try:
+                # Tor-Client initialisieren
+                tor_client = get_tor_client(use_tor=True)
+                
+                # Wenn der Client nicht läuft, versuchen ihn zu starten
+                if not tor_client.is_running:
+                    self.tor_ip_text.value = "Tor-Client läuft nicht. Starte Tor..."
+                    self.display()
+                    tor_client.start()
+                    # Kurz warten, damit Tor starten kann
+                    time.sleep(1)
+                
+                # IP mit Timeout abfragen
+                ip = None
                 try:
-                    # Hole den Tor-Client IMMER mit use_tor=True, wenn der Dienst läuft
-                    tor_client = get_tor_client(use_tor=True)
+                    # Reduzierter Timeout für schnellere Fehlerbehandlung
+                    ip = tor_client.get_current_ip()
                     
-                    # Überprüfe, ob der Tor-Client wirklich läuft
-                    if not tor_client.is_running:
-                        def update_ui_error():
-                            self.tor_ip_text.value = "Tor-Client läuft nicht. Status wird korrigiert..."
-                            self.display()
-                            # Starte Tor
-                            tor_client.start()
-                        
-                        if hasattr(self, 'parentApp') and hasattr(self.parentApp, '_Forms'):
-                            npyscreen.globals.MAINLOOP.schedule_task_in_main_thread(update_ui_error)
-                        return
-                    
-                    # IP-Adresse abrufen mit Timeout
-                    ip_future = None
-                    max_wait_time = 20  # Sekunden
-                    
-                    def get_ip_with_timeout():
-                        try:
-                            return tor_client.get_current_ip()
-                        except Exception as e:
-                            logging.error(f"Fehler im IP-Abfrage-Thread: {str(e)}")
-                            return None
-                    
-                    # IP-Abfrage in separatem Thread starten
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        ip_future = executor.submit(get_ip_with_timeout)
-                        try:
-                            # Mit Timeout auf Ergebnis warten
-                            ip = ip_future.result(timeout=max_wait_time)
-                        except concurrent.futures.TimeoutError:
-                            ip = None
-                            logging.error(f"Timeout bei IP-Abfrage nach {max_wait_time} Sekunden")
-                    
-                    # UI-Update in Hauptthread durchführen
-                    def update_ui():
-                        if ip:
-                            self.tor_ip_text.value = ip
-                        elif ip is None:
-                            self.tor_ip_text.value = "IP-Abfrage fehlgeschlagen. Prüfe deine Verbindung."
-                            logging.error("IP-Abfrage fehlgeschlagen")
-                        else:
-                            self.tor_ip_text.value = "IP-Adresse konnte nicht abgerufen werden."
-                        self.display()
-                    
-                    # UI-Update ausführen
-                    if hasattr(self, 'parentApp') and hasattr(self.parentApp, '_Forms'):
-                        npyscreen.globals.MAINLOOP.schedule_task_in_main_thread(update_ui)
+                    if ip:
+                        self.tor_ip_text.value = ip
+                    else:
+                        self.tor_ip_text.value = "IP-Adresse konnte nicht abgerufen werden."
                 except Exception as e:
+                    self.tor_ip_text.value = f"Fehler bei IP-Abfrage: {str(e)[:30]}..."
                     logging.error(f"Fehler beim Abrufen der IP-Adresse: {str(e)}")
-                    import traceback
-                    logging.debug(f"Traceback: {traceback.format_exc()}")
-                    
-                    # Auch bei Fehlern UI aktualisieren
-                    def update_ui_on_error():
-                        self.tor_ip_text.value = f"Fehler bei IP-Abfrage: {str(e)[:30]}..."
-                        self.display()
-                    
-                    if hasattr(self, 'parentApp') and hasattr(self.parentApp, '_Forms'):
-                        npyscreen.globals.MAINLOOP.schedule_task_in_main_thread(update_ui_on_error)
-            
-            # Thread starten
-            threading.Thread(target=update_ip_thread, daemon=True).start()
+            except Exception as e:
+                self.tor_ip_text.value = f"Tor-Client-Fehler: {str(e)[:30]}..."
+                logging.error(f"Fehler mit Tor-Client: {str(e)}")
             
         except ImportError:
             self.tor_ip_text.value = "Tor-Module nicht verfügbar"
@@ -1859,6 +1610,7 @@ def check_other_extractors(episode_urls: list):
         streamkiste(streamkiste_url)
 
     return remaining_urls
+
 
 
 
