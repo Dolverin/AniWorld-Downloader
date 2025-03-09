@@ -6,18 +6,21 @@ from .ascii_art import display_ascii_art
 from .common import (check_dependencies, check_if_episode_exists,
                      check_internet_connection, check_package_installation,
                      clean_up_leftovers, clear_screen, countdown,
+                     create_advanced_episode_pattern, create_episode_pattern,
                      download_dependencies, execute_command, fetch_anime_id,
-                     fetch_url_content, ftoi, get_anime_season_title,
-                     get_description, get_description_with_id,
-                     get_language_code, get_language_string, get_random_anime,
+                     fetch_url_content, format_anime_title, ftoi,
+                     get_anime_season_title, get_description,
+                     get_description_with_id, get_language_code,
+                     get_language_string, get_random_anime,
                      get_season_and_episode_numbers, get_season_data,
                      get_season_episode_count, get_version, install_and_import,
                      is_tail_running, is_version_outdated,
-                     open_terminal_with_command, print_progress_info,
+                     open_terminal_with_command, parse_anime_url,
+                     parse_episodes_from_url, print_progress_info,
                      raise_runtime_error, read_episode_file, sanitize_path,
-                     self_uninstall, set_terminal_size, setup_anime4k,
-                     setup_aniskip, setup_autoexit, setup_autostart,
-                     show_messagebox, update_component)
+                     search_anime_by_name, self_uninstall, set_terminal_size,
+                     setup_anime4k, setup_aniskip, setup_autoexit,
+                     setup_autostart, show_messagebox, update_component)
 
 # Import für Tor-Funktionalität
 try:

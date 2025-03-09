@@ -2084,5 +2084,222 @@ def _check_if_episode_exists_filesystem(
     return False
 
 
+def parse_episodes_from_url(url: str) -> list:
+    """
+    Extrahiert alle Episoden-URLs von einer Anime-Seite.
+    
+    Args:
+        url: Die URL der Anime-Seite
+        
+    Returns:
+        Liste von Episode-URLs
+    """
+    try:
+        logging.debug(f"Extrahiere Episoden-URLs von: {url}")
+        html_content = fetch_url_content(url)
+        if not html_content:
+            logging.error(f"Konnte keine Daten von {url} abrufen")
+            return []
+            
+        soup = BeautifulSoup(html_content, 'html.parser')
+        episode_links = []
+        
+        # Suche nach Episode-Links
+        for link in soup.select('a[href*="/anime/stream/"][href*="/staffel-"][href*="/episode-"]'):
+            episode_url = link.get('href')
+            if episode_url and episode_url not in episode_links:
+                # URL relativ zur Basis-URL vervollständigen, falls notwendig
+                if episode_url.startswith('/'):
+                    episode_url = f"https://aniworld.to{episode_url}"
+                episode_links.append(episode_url)
+        
+        logging.debug(f"Gefundene Episoden-URLs: {len(episode_links)}")
+        return episode_links
+    except Exception as e:
+        logging.error(f"Fehler beim Extrahieren der Episoden-URLs: {e}")
+        return []
+
+def parse_anime_url(url: str) -> str:
+    """
+    Extrahiert den Anime-Slug aus einer URL.
+    
+    Args:
+        url: Die URL der Anime-Seite oder Episode
+        
+    Returns:
+        Anime-Slug als String
+    """
+    try:
+        logging.debug(f"Extrahiere Anime-Slug aus URL: {url}")
+        # Regex für verschiedene URL-Formate
+        patterns = [
+            r'https?://aniworld\.to/anime/stream/([^/]+)', # Format: https://aniworld.to/anime/stream/slug
+            r'https?://aniworld\.to/anime/stream/([^/]+)/staffel-\d+/episode-\d+', # Format: https://aniworld.to/anime/stream/slug/staffel-x/episode-y
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, url)
+            if match:
+                slug = match.group(1)
+                logging.debug(f"Extrahierter Anime-Slug: {slug}")
+                return slug
+                
+        logging.error(f"Konnte keinen Anime-Slug aus URL extrahieren: {url}")
+        return ""
+    except Exception as e:
+        logging.error(f"Fehler beim Extrahieren des Anime-Slugs: {e}")
+        return ""
+
+def create_episode_pattern(anime_title, season, episode, language):
+    """
+    Erstellt ein einfaches Muster für die Episodenbenennung.
+    
+    Args:
+        anime_title: Titel des Animes
+        season: Staffelnummer
+        episode: Episodennummer
+        language: Sprachcode oder -bezeichnung
+        
+    Returns:
+        Muster für die Episodenbenennung
+    """
+    # Sprachbezeichnung extrahieren
+    lang_str = ""
+    if isinstance(language, str):
+        if language == "1" or language.lower() == "german dub":
+            lang_str = "German.Dub"
+        elif language == "2" or language.lower() == "english sub":
+            lang_str = "English.Sub"
+        elif language == "3" or language.lower() == "german sub":
+            lang_str = "German.Sub"
+        else:
+            lang_str = language
+            
+    # Formatierung des Musters
+    pattern = f"{anime_title}.*S{season:02d}E{episode:02d}.*{lang_str}"
+    logging.debug(f"Einfaches Episodenmuster erstellt: {pattern}")
+    return pattern
+    
+def create_advanced_episode_pattern(anime_title, season, episode, language):
+    """
+    Erstellt ein erweitertes Muster für die Episodenbenennung mit verschiedenen Formatierungsoptionen.
+    
+    Args:
+        anime_title: Titel des Animes
+        season: Staffelnummer
+        episode: Episodennummer
+        language: Sprachcode oder -bezeichnung
+        
+    Returns:
+        Liste von möglichen Mustern für die Episodenbenennung
+    """
+    patterns = []
+    
+    # Sprachbezeichnungen
+    language_variants = []
+    if isinstance(language, str):
+        if language == "1" or language.lower() == "german dub":
+            language_variants = ["German.Dub", "GerDub", "Ger.Dub", "German"]
+        elif language == "2" or language.lower() == "english sub":
+            language_variants = ["English.Sub", "EngSub", "Eng.Sub", "English"]
+        elif language == "3" or language.lower() == "german sub":
+            language_variants = ["German.Sub", "GerSub", "Ger.Sub"]
+        else:
+            language_variants = [language]
+    
+    # Normalisiere den Anime-Titel
+    anime_title = anime_title.replace(':', '').replace('!', '').replace('?', '')
+    
+    # Verschiedene Formatierungen des Titels
+    title_variants = [
+        anime_title,
+        re.sub(r'\s+', '.', anime_title),
+        re.sub(r'\s+', '_', anime_title)
+    ]
+    
+    # Verschiedene Formatierungen der Staffel- und Episodennummern
+    season_episode_formats = [
+        f"S{season:02d}E{episode:02d}",
+        f"S{season:d}E{episode:02d}",
+        f"S{season:02d}E{episode:d}",
+        f"S{season:d}E{episode:d}",
+        f"S{season:02d}.E{episode:02d}",
+        f"Season.{season:02d}.Episode.{episode:02d}",
+        f"Staffel.{season:02d}.Episode.{episode:02d}"
+    ]
+    
+    # Kombiniere alle Varianten
+    for title in title_variants:
+        for se_format in season_episode_formats:
+            for lang in language_variants:
+                patterns.append(f"{title}.*{se_format}.*{lang}")
+                patterns.append(f"{title}.*{lang}.*{se_format}")
+                
+    logging.debug(f"Erweitertes Episodenmuster erstellt mit {len(patterns)} Varianten")
+    return patterns
+
+def format_anime_title(anime_slug):
+    """
+    Formatiert einen Anime-Slug in einen lesbaren Titel.
+    
+    Args:
+        anime_slug: Der Slug des Animes (z.B. "my-hero-academia")
+        
+    Returns:
+        Formatierter Titel (z.B. "My Hero Academia")
+    """
+    logging.debug(f"Formatiere Anime-Titel für Slug: {anime_slug}")
+    try:
+        formatted_title = anime_slug.replace("-", " ").title()
+        logging.debug(f"Formatierter Titel: {formatted_title}")
+        return formatted_title
+    except AttributeError:
+        logging.error(f"AttributeError bei der Formatierung des Anime-Titels: {anime_slug}")
+        return ""
+
+def search_anime_by_name(query):
+    """
+    Sucht nach einem Anime basierend auf einem Suchbegriff und gibt den Slug zurück.
+    
+    Args:
+        query: Suchbegriff
+        
+    Returns:
+        Slug des gefundenen Animes oder leerer String, wenn nichts gefunden wurde
+    """
+    try:
+        logging.debug(f"Suche nach Anime mit Begriff: {query}")
+        
+        # URL für die Suche erstellen
+        search_url = f"https://aniworld.to/search?q={query.replace(' ', '+')}"
+        
+        # Suchseite abrufen
+        html_content = fetch_url_content(search_url)
+        if not html_content:
+            logging.error(f"Konnte keine Daten von {search_url} abrufen")
+            return ""
+            
+        # BeautifulSoup-Objekt erstellen
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Nach dem ersten Suchergebnis suchen (Link zum Anime)
+        result = soup.select_one('a.hover\\:text-primary')
+        
+        if result and 'href' in result.attrs:
+            anime_url = result['href']
+            # Extrahiere den Slug aus der URL
+            match = re.search(r'/anime/stream/([^/]+)', anime_url)
+            if match:
+                slug = match.group(1)
+                logging.debug(f"Anime gefunden: {slug}")
+                return slug
+                
+        logging.debug(f"Kein Anime für Suchbegriff '{query}' gefunden")
+        return ""
+    except Exception as e:
+        logging.error(f"Fehler bei der Anime-Suche: {e}")
+        return ""
+
+
 if __name__ == "__main__":
     pass
