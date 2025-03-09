@@ -52,8 +52,13 @@ def fetch_direct_link(link):
         browser = p.webkit.launch(headless=False)
         page = browser.new_page()
 
-        page.on("request", lambda request: filtered_urls.append(request.url)
-                if re.match(r"https://voe\.sx/e/.*", request.url) else None)
+        # Definiere die Callback-Funktion für Anfragen
+        def request_callback(request):
+            if re.match(r"https://voe\.sx/e/.*", request.url):
+                filtered_urls.append(request.url)
+        
+        # Registriere den Callback für Anfragen
+        page.on("request", request_callback)
 
         page.goto(link)
 
