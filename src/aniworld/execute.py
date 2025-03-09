@@ -424,7 +424,32 @@ def handle_download_action(params: Dict[str, Any]) -> None:
 
     logging.debug("Season title: %s, Episode title: %s", season_title, episode_title)
 
-    file_name = f"{sanitized_anime_title} - {season_title} - {episode_title} [{language}].mp4"
+    # Formatierte Staffel- und Episodennummern für das Standardformat
+    if params.get('season_number'):
+        season_num = int(params['season_number'])
+        episode_num = int(params['episode_number'])
+        
+        # Formatiere die Episoden- und Staffelnummern mit führenden Nullen
+        if season_num < 10:
+            season_str = f"00{season_num}"
+        elif season_num < 100:
+            season_str = f"0{season_num}"
+        else:
+            season_str = str(season_num)
+            
+        if episode_num < 10:
+            episode_str = f"00{episode_num}"
+        elif episode_num < 100:
+            episode_str = f"0{episode_num}"
+        else:
+            episode_str = str(episode_num)
+            
+        # Verwende das Standardformat mit S000E000
+        file_name = f"{sanitized_anime_title} - S{season_str}E{episode_str} ({language}).mp4"
+    else:
+        # Falls keine Season/Episode-Nummern vorhanden sind, verwende die Titel-Version
+        file_name = f"{sanitized_anime_title} - {season_title} - {episode_title} [{language}].mp4"
+    
     file_path = os.path.join(anime_dir, file_name)
     logging.debug("File path: %s", file_path)
 
