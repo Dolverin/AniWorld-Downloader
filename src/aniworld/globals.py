@@ -3,41 +3,49 @@ import logging
 import tempfile
 import random
 import sys
+from typing import List, Optional, Any, Dict, Tuple
 
 import colorlog
 
-# Debug-Modus wieder auf Umgebungsvariable setzen
-IS_DEBUG_MODE = os.getenv('IS_DEBUG_MODE', 'False').lower() in ('true', '1', 't', 'y', 'yes')
-LOG_FILE_PATH = os.path.join(tempfile.gettempdir(), 'aniworld.log')
+# Import der neuen Konfiguration
+from aniworld.config import (
+    config,
+    is_debug_mode,
+    is_tor_enabled,
+    get_download_path,
+    get_default_action,
+    get_default_language,
+    get_default_provider,
+    get_default_watch_provider,
+    get_provider_priority,
+    get_terminal_size,
+    get_log_file_path
+)
 
-DEFAULT_ACTION = "Download"      # E.g. Watch, Download, Syncplay
-DEFAULT_DOWNLOAD_PATH = "/mnt/Plex"
-DEFAULT_LANGUAGE = "German Dub"  # German Dub, English Sub, German Sub
-DEFAULT_PROVIDER = "VOE"         # Vidoza, Streamtape, VOE, Doodstream
-DEFAULT_PROVIDER_WATCH = "Doodstream"
-DEFAULT_ANISKIP = False
-DEFAULT_KEEP_WATCHING = False
-DEFAULT_ONLY_DIRECT_LINK = False
-DEFAULT_ONLY_COMMAND = False
-DEFAULT_PROXY = None
-DEFAULT_USE_PLAYWRIGHT = False
-DEFAULT_TERMINAL_SIZE = (90, 38)
+# Abwärtskompatibilität: Alte Konstanten auf neue Konfigurationswerte verweisen
+IS_DEBUG_MODE = is_debug_mode()
+LOG_FILE_PATH = get_log_file_path()
+
+DEFAULT_ACTION = get_default_action()
+DEFAULT_DOWNLOAD_PATH = get_download_path()
+DEFAULT_LANGUAGE = get_default_language()
+DEFAULT_PROVIDER = get_default_provider()
+DEFAULT_PROVIDER_WATCH = get_default_watch_provider()
+DEFAULT_ANISKIP = config.get("general", "aniskip")
+DEFAULT_KEEP_WATCHING = config.get("general", "keep_watching")
+DEFAULT_ONLY_DIRECT_LINK = config.get("advanced", "only_direct_link")
+DEFAULT_ONLY_COMMAND = config.get("advanced", "only_command")
+DEFAULT_PROXY = config.get("advanced", "proxy")
+DEFAULT_USE_PLAYWRIGHT = config.get("advanced", "use_playwright")
+DEFAULT_TERMINAL_SIZE = get_terminal_size()
 
 # Tor-Konfiguration
-USE_TOR = os.getenv('USE_TOR', 'False').lower() in ('true', '1', 't', 'y', 'yes')
-TOR_AUTO_RETRY = True  # Automatisch neue IP holen, wenn IP gesperrt
-TOR_MAX_RETRIES = 3    # Maximale Anzahl an Versuchen mit neuer IP
+USE_TOR = is_tor_enabled()
+TOR_AUTO_RETRY = config.get("tor", "auto_retry")
+TOR_MAX_RETRIES = config.get("tor", "max_retries")
 
-# Priorisierte Liste der Provider gemäß Empfehlung:
-# VOE > Vidoza > Streamtape > andere
-PROVIDER_PRIORITY = [
-    "VOE",        # Erste Priorität
-    "Vidoza",     # Zweite Priorität
-    "Streamtape", # Dritte Priorität
-    "Doodstream", # Restliche Provider
-    "Vidmoly",
-    "SpeedFiles"
-]
+# Provider-Priorität
+PROVIDER_PRIORITY = get_provider_priority()
 
 log_colors = {
     'DEBUG': 'bold_blue',
