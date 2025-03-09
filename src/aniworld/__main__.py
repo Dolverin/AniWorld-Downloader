@@ -161,13 +161,34 @@ class EpisodeForm(npyscreen.ActionForm):
 
     def setup_signal_handling(self):
         def signal_handler(_signal_number, _frame):
+            logging.debug("Signal-Handler aufgerufen")
             try:
-                self.parentApp.switchForm(None)
-            except AttributeError:
-                pass
-            self.cancel_timer()
-            sys.exit()
+                # Sichere Referenzen speichern
+                app = self.parentApp
+                # Sanfte Beendigung, wenn möglich
+                if app and hasattr(app, 'switchForm'):
+                    try:
+                        app.switchForm(None)
+                    except Exception as e:
+                        logging.debug(f"Fehler beim Switch Form: {e}")
+            except (AttributeError, ReferenceError):
+                logging.debug("ParentApp nicht mehr verfügbar")
+            
+            # Timer sicher beenden
+            try:
+                if hasattr(self, 'timer') and self.timer:
+                    self.cancel_timer()
+            except Exception as e:
+                logging.debug(f"Fehler beim Abbrechen des Timers: {e}")
+                
+            # Bereite das Beenden vor, aber erzwinge es nicht sofort
+            logging.debug("Beende Anwendung über Signal-Handler")
+            try:
+                sys.exit(0)
+            except SystemExit:
+                os._exit(0)  # Harter Exit als Fallback
 
+        # Signal-Handler installieren
         signal.signal(signal.SIGINT, signal_handler)
         logging.debug("Signal handler for SIGINT registered")
 
@@ -200,9 +221,28 @@ class EpisodeForm(npyscreen.ActionForm):
             logging.debug("Directory field shown, Aniskip selector hidden")
         self.display()
 
+    def on_cancel(self):
+        logging.debug("Cancel button pressed")
+        self.cancel_timer()
+        
+        # Thread-Bereinigung
+        self._exited = True
+        logging.debug("Thread-Exit-Flag gesetzt")
+        
+        # Warte ggf. kurz auf Thread-Beendigung
+        if hasattr(self, 'tor_info_thread') and self.tor_info_thread:
+            logging.debug("Warte auf Beendigung des Tor-Info-Threads")
+            # Nicht blockierend warten, da es ein Daemon-Thread ist
+            
+        self.parentApp.switchForm(None)
+
     def on_ok(self):
         logging.debug("OK button pressed")
         self.cancel_timer()
+        
+        # Thread-Bereinigung
+        self._exited = True
+        logging.debug("Thread-Exit-Flag gesetzt")
         npyscreen.blank_terminal()
         output_directory = self.directory_field.value if not self.directory_field.hidden else None
         logging.debug("Output directory: %s", output_directory)
@@ -265,7 +305,6 @@ class EpisodeForm(npyscreen.ActionForm):
                     episode for episode in cleaned_selected_episodes 
                     if episode not in [e[4:] for e in existing_episodes_selected]
                 ]
-                
                 if not cleaned_selected_episodes:
                     self.status_text.value = "Keine neuen Episoden zum Herunterladen ausgewählt."
                     self.display()
@@ -550,12 +589,6 @@ class EpisodeForm(npyscreen.ActionForm):
         self.season_selector.values = ["Staffel " + str(season) if season > 0 else "Filme" 
                                    for season in sorted(self.seasons_map.keys())]
         self.season_selector.display()
-
-    def on_cancel(self):
-        """Wird beim Beenden des Formulars aufgerufen."""
-        self._exited = True  # Signal für den Update-Thread zum Beenden
-        self.cancel_timer()  # Bestehenden Timer stoppen
-        self.parentApp.switchForm(None)
 
     def go_to_second_form(self):
         self.parentApp.switchForm("SECOND")
@@ -1004,19 +1037,47 @@ class EpisodeForm(npyscreen.ActionForm):
     def start_tor_info_update_timer(self):
         """Startet einen Timer für regelmäßige Updates der Tor-Informationen."""
         def update_tor_info_timer():
-            while not getattr(self, '_exited', False):
-                try:
-                    # Aktualisiere Tor-Infos alle 30 Sekunden
-                    self.update_tor_info()
-                except Exception as e:
-                    logging.error(f"Fehler bei regelmäßigem Tor-Info-Update: {str(e)}")
-                finally:
+            import weakref
+            # Schwache Referenz auf self, um Kreisreferenzen zu vermeiden
+            weak_self = weakref.ref(self)
+            
+            try:
+                while True:
+                    # Prüfe, ob das Objekt noch existiert
+                    current_self = weak_self()
+                    if current_self is None or getattr(current_self, '_exited', False):
+                        logging.debug("Tor-Info-Thread: Objekt nicht mehr vorhanden oder beendet, beende Thread")
+                        break
+                        
+                    try:
+                        # Rufe update_tor_info nur auf, wenn das Objekt noch existiert
+                        if current_self is not None and hasattr(current_self, 'update_tor_info'):
+                            current_self.update_tor_info()
+                    except ReferenceError:
+                        # Objekt wurde während des Aufrufs zerstört
+                        logging.debug("Tor-Info-Thread: Objekt während des Aufrufs zerstört, beende Thread")
+                        break
+                    except Exception as e:
+                        logging.error(f"Fehler bei regelmäßigem Tor-Info-Update: {str(e)}")
+                    
+                    # Prüfe vor dem Schlafen erneut, ob wir beenden sollen
+                    current_self = weak_self()
+                    if current_self is None or getattr(current_self, '_exited', False):
+                        break
+                        
                     # Warte 30 Sekunden bis zum nächsten Update
                     time.sleep(30)
+            except Exception as e:
+                logging.error(f"Fehler im Tor-Info-Thread: {str(e)}")
+            finally:
+                logging.debug("Tor-Info-Update-Thread beendet")
         
-        # Starte Background-Thread für Updates
+        # Starte Background-Thread für Updates mit Daemon-Flag
+        # Daemon-Threads werden automatisch beendet, wenn das Hauptprogramm endet
+        self._exited = False  # Flag zum kontrollierten Beenden
         self.tor_info_thread = threading.Thread(target=update_tor_info_timer, daemon=True)
         self.tor_info_thread.start()
+        logging.debug("Tor-Info-Update-Thread gestartet")
 
 
 # pylint: disable=R0901
