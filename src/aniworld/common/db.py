@@ -178,11 +178,84 @@ class EpisodeDatabase:
                 (episode_id)
             ''')
 
+            # --- NEUE TABELLEN FÜR CACHE-SYSTEM ---
+
+            # Tabelle für grundlegende Anime-Metadaten
+            self.db.execute('''
+                CREATE TABLE IF NOT EXISTS anime_metadata (
+                    id INTEGER PRIMARY KEY,
+                    slug TEXT NOT NULL UNIQUE,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    thumbnail_url TEXT,
+                    last_updated INTEGER NOT NULL,
+                    ttl INTEGER NOT NULL,
+                    UNIQUE(slug)
+                )
+            ''')
+
+            # Tabelle für Staffel-Metadaten
+            self.db.execute('''
+                CREATE TABLE IF NOT EXISTS season_metadata (
+                    id INTEGER PRIMARY KEY,
+                    anime_id INTEGER NOT NULL,
+                    season_number INTEGER NOT NULL,
+                    season_title TEXT NOT NULL,
+                    episode_count INTEGER,
+                    last_updated INTEGER NOT NULL,
+                    FOREIGN KEY (anime_id) REFERENCES anime_metadata (id) ON DELETE CASCADE,
+                    UNIQUE(anime_id, season_number)
+                )
+            ''')
+
+            # Tabelle für Episoden-Metadaten
+            self.db.execute('''
+                CREATE TABLE IF NOT EXISTS episode_metadata (
+                    id INTEGER PRIMARY KEY,
+                    season_id INTEGER NOT NULL,
+                    episode_number INTEGER NOT NULL,
+                    episode_title TEXT,
+                    url TEXT,
+                    last_updated INTEGER NOT NULL,
+                    FOREIGN KEY (season_id) REFERENCES season_metadata (id) ON DELETE CASCADE,
+                    UNIQUE(season_id, episode_number)
+                )
+            ''')
+
+            # Tabelle für Sprachverfügbarkeit
+            self.db.execute('''
+                CREATE TABLE IF NOT EXISTS language_availability (
+                    id INTEGER PRIMARY KEY,
+                    episode_id INTEGER NOT NULL,
+                    language TEXT NOT NULL,
+                    is_available BOOLEAN NOT NULL,
+                    last_checked INTEGER NOT NULL,
+                    FOREIGN KEY (episode_id) REFERENCES episode_metadata (id) ON DELETE CASCADE,
+                    UNIQUE(episode_id, language)
+                )
+            ''')
+
+            # Indizes für schnellere Suche nach Metadaten
+            self.db.execute('''
+                CREATE INDEX IF NOT EXISTS idx_anime_slug ON anime_metadata (slug)
+            ''')
+
+            self.db.execute('''
+                CREATE INDEX IF NOT EXISTS idx_season_anime ON season_metadata (anime_id)
+            ''')
+
+            self.db.execute('''
+                CREATE INDEX IF NOT EXISTS idx_episode_season ON episode_metadata (season_id)
+            ''')
+
+            self.db.execute('''
+                CREATE INDEX IF NOT EXISTS idx_language_episode ON language_availability (episode_id, language)
+            ''')
+
             self.db.commit()
-            logging.debug("Datenbanktabellen wurden initialisiert")
-        except sqlite3.Error as e:
+            logging.debug("Alle Tabellen wurden erfolgreich erstellt oder existieren bereits")
+        except Exception as e:
             logging.error(f"Fehler beim Erstellen der Tabellen: {e}")
-            raise
 
     def scan_directory(
             self,
@@ -742,39 +815,39 @@ class EpisodeDatabase:
     def get_download_stats(self, anime_title=None, provider=None, days=None):
         """
         Gibt Download-Statistiken zurück, gefiltert nach verschiedenen Kriterien.
-
+        
         Args:
             anime_title: Filtert nach Anime-Titel
             provider: Filtert nach Provider
             days: Gibt nur Statistiken der letzten X Tage zurück
-
+            
         Returns:
             Liste mit Download-Statistiken
         """
         try:
             query = """
-                SELECT ds.*, ef.title, ef.season, ef.episode, ef.language, ef.file_path
+                SELECT ds.*, ef.title, ef.season, ef.episode, ef.language, ef.file_path 
                 FROM download_stats ds
                 LEFT JOIN episode_files ef ON ds.episode_id = ef.id
                 WHERE 1=1
             """
             params = []
-
+            
             if anime_title:
                 query += " AND ef.title LIKE ? "
                 params.append(f"%{anime_title}%")
-
+                
             if provider:
                 query += " AND ds.provider = ? "
                 params.append(provider)
-
+                
             if days:
                 min_time = int(time.time()) - (days * 86400)
                 query += " AND ds.download_date >= ? "
                 params.append(min_time)
-
+                
             query += " ORDER BY ds.download_date DESC"
-
+            
             cursor = self.db.execute(query, params)
             results = []
             for row in cursor.fetchall():
@@ -787,6 +860,523 @@ class EpisodeDatabase:
         except Exception as e:
             logging.error(f"Fehler beim Abrufen der Download-Statistiken: {e}")
             return []
+
+    # ----- NEUE METHODEN FÜR ANIME METADATA CACHE -----
+
+    def save_anime_metadata(self, slug, title, description=None, thumbnail_url=None, ttl=86400):
+        """
+        Speichert oder aktualisiert Metadaten für einen Anime.
+        
+        Args:
+            slug: Der eindeutige Slug des Animes (z.B. 'demon-slayer')
+            title: Der Titel des Animes
+            description: Die Beschreibung des Animes (optional)
+            thumbnail_url: URL zum Thumbnail-Bild (optional)
+            ttl: Time-to-Live in Sekunden (Standard: 24 Stunden)
+            
+        Returns:
+            Die ID des Anime-Eintrags
+        """
+        try:
+            current_time = int(time.time())
+            
+            # Prüfen, ob der Anime bereits existiert
+            cursor = self.db.execute(
+                "SELECT id FROM anime_metadata WHERE slug = ?", 
+                (slug,)
+            )
+            existing = cursor.fetchone()
+            
+            if existing:
+                # Aktualisiere den bestehenden Eintrag
+                self.db.execute("""
+                    UPDATE anime_metadata 
+                    SET title = ?, description = ?, thumbnail_url = ?, 
+                        last_updated = ?, ttl = ?
+                    WHERE id = ?
+                """, (title, description, thumbnail_url, current_time, ttl, existing[0]))
+                anime_id = existing[0]
+            else:
+                # Füge einen neuen Eintrag hinzu
+                cursor = self.db.execute("""
+                    INSERT INTO anime_metadata 
+                    (slug, title, description, thumbnail_url, last_updated, ttl)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (slug, title, description, thumbnail_url, current_time, ttl))
+                anime_id = cursor.lastrowid
+            
+            self.db.commit()
+            logging.debug(f"Anime-Metadaten gespeichert/aktualisiert für {slug} (ID: {anime_id})")
+            return anime_id
+        except Exception as e:
+            logging.error(f"Fehler beim Speichern der Anime-Metadaten für {slug}: {e}")
+            return None
+
+    def get_anime_metadata(self, slug):
+        """
+        Ruft die Metadaten für einen Anime anhand seines Slugs ab.
+        
+        Args:
+            slug: Der eindeutige Slug des Animes
+            
+        Returns:
+            Dictionary mit Anime-Metadaten oder None, wenn nicht gefunden oder veraltet
+        """
+        try:
+            cursor = self.db.execute("""
+                SELECT id, slug, title, description, thumbnail_url, last_updated, ttl
+                FROM anime_metadata 
+                WHERE slug = ?
+            """, (slug,))
+            
+            row = cursor.fetchone()
+            if not row:
+                return None
+                
+            current_time = int(time.time())
+            anime_data = {
+                'id': row[0],
+                'slug': row[1],
+                'title': row[2],
+                'description': row[3],
+                'thumbnail_url': row[4],
+                'last_updated': row[5],
+                'ttl': row[6]
+            }
+            
+            # Prüfen, ob der Cache-Eintrag noch gültig ist
+            if current_time - anime_data['last_updated'] > anime_data['ttl']:
+                logging.debug(f"Cache-Eintrag für Anime {slug} ist veraltet")
+                return None
+                
+            return anime_data
+        except Exception as e:
+            logging.error(f"Fehler beim Abrufen der Anime-Metadaten für {slug}: {e}")
+            return None
+
+    def save_season_metadata(self, anime_id, season_number, season_title, episode_count=None):
+        """
+        Speichert oder aktualisiert Metadaten für eine Staffel.
+        
+        Args:
+            anime_id: Die ID des zugehörigen Animes
+            season_number: Die Staffelnummer
+            season_title: Der Titel der Staffel
+            episode_count: Die Anzahl der Episoden (optional)
+            
+        Returns:
+            Die ID des Staffel-Eintrags
+        """
+        try:
+            current_time = int(time.time())
+            
+            # Prüfen, ob die Staffel bereits existiert
+            cursor = self.db.execute(
+                "SELECT id FROM season_metadata WHERE anime_id = ? AND season_number = ?", 
+                (anime_id, season_number)
+            )
+            existing = cursor.fetchone()
+            
+            if existing:
+                # Aktualisiere den bestehenden Eintrag
+                self.db.execute("""
+                    UPDATE season_metadata 
+                    SET season_title = ?, episode_count = ?, last_updated = ?
+                    WHERE id = ?
+                """, (season_title, episode_count, current_time, existing[0]))
+                season_id = existing[0]
+            else:
+                # Füge einen neuen Eintrag hinzu
+                cursor = self.db.execute("""
+                    INSERT INTO season_metadata 
+                    (anime_id, season_number, season_title, episode_count, last_updated)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (anime_id, season_number, season_title, episode_count, current_time))
+                season_id = cursor.lastrowid
+            
+            self.db.commit()
+            logging.debug(f"Staffel-Metadaten gespeichert für Anime ID {anime_id}, Staffel {season_number} (ID: {season_id})")
+            return season_id
+        except Exception as e:
+            logging.error(f"Fehler beim Speichern der Staffel-Metadaten für Anime ID {anime_id}, Staffel {season_number}: {e}")
+            return None
+
+    def get_seasons_for_anime(self, anime_id):
+        """
+        Ruft alle Staffeln für einen Anime ab.
+        
+        Args:
+            anime_id: Die ID des Animes
+            
+        Returns:
+            Liste von Dictionaries mit Staffel-Metadaten
+        """
+        try:
+            cursor = self.db.execute("""
+                SELECT id, anime_id, season_number, season_title, episode_count, last_updated
+                FROM season_metadata 
+                WHERE anime_id = ?
+                ORDER BY season_number
+            """, (anime_id,))
+            
+            seasons = []
+            for row in cursor.fetchall():
+                seasons.append({
+                    'id': row[0],
+                    'anime_id': row[1],
+                    'season_number': row[2],
+                    'season_title': row[3],
+                    'episode_count': row[4],
+                    'last_updated': row[5]
+                })
+                
+            return seasons
+        except Exception as e:
+            logging.error(f"Fehler beim Abrufen der Staffeln für Anime ID {anime_id}: {e}")
+            return []
+
+    def save_episode_metadata(self, season_id, episode_number, episode_title=None, url=None):
+        """
+        Speichert oder aktualisiert Metadaten für eine Episode.
+        
+        Args:
+            season_id: Die ID der zugehörigen Staffel
+            episode_number: Die Episodennummer
+            episode_title: Der Titel der Episode (optional)
+            url: Die URL zur Episode (optional)
+            
+        Returns:
+            Die ID des Episoden-Eintrags
+        """
+        try:
+            current_time = int(time.time())
+            
+            # Prüfen, ob die Episode bereits existiert
+            cursor = self.db.execute(
+                "SELECT id FROM episode_metadata WHERE season_id = ? AND episode_number = ?", 
+                (season_id, episode_number)
+            )
+            existing = cursor.fetchone()
+            
+            if existing:
+                # Aktualisiere den bestehenden Eintrag
+                self.db.execute("""
+                    UPDATE episode_metadata 
+                    SET episode_title = ?, url = ?, last_updated = ?
+                    WHERE id = ?
+                """, (episode_title, url, current_time, existing[0]))
+                episode_id = existing[0]
+            else:
+                # Füge einen neuen Eintrag hinzu
+                cursor = self.db.execute("""
+                    INSERT INTO episode_metadata 
+                    (season_id, episode_number, episode_title, url, last_updated)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (season_id, episode_number, episode_title, url, current_time))
+                episode_id = cursor.lastrowid
+            
+            self.db.commit()
+            logging.debug(f"Episoden-Metadaten gespeichert für Staffel ID {season_id}, Episode {episode_number} (ID: {episode_id})")
+            return episode_id
+        except Exception as e:
+            logging.error(f"Fehler beim Speichern der Episoden-Metadaten für Staffel ID {season_id}, Episode {episode_number}: {e}")
+            return None
+
+    def get_episodes_for_season(self, season_id):
+        """
+        Ruft alle Episoden für eine Staffel ab.
+        
+        Args:
+            season_id: Die ID der Staffel
+            
+        Returns:
+            Liste von Dictionaries mit Episoden-Metadaten
+        """
+        try:
+            cursor = self.db.execute("""
+                SELECT id, season_id, episode_number, episode_title, url, last_updated
+                FROM episode_metadata 
+                WHERE season_id = ?
+                ORDER BY episode_number
+            """, (season_id,))
+            
+            episodes = []
+            for row in cursor.fetchall():
+                episodes.append({
+                    'id': row[0],
+                    'season_id': row[1],
+                    'episode_number': row[2],
+                    'episode_title': row[3],
+                    'url': row[4],
+                    'last_updated': row[5]
+                })
+                
+            return episodes
+        except Exception as e:
+            logging.error(f"Fehler beim Abrufen der Episoden für Staffel ID {season_id}: {e}")
+            return []
+
+    def save_language_availability(self, episode_id, language, is_available):
+        """
+        Speichert oder aktualisiert die Verfügbarkeit einer Sprache für eine Episode.
+        
+        Args:
+            episode_id: Die ID der Episode
+            language: Die Sprache (z.B. 'German Dub', 'English Sub')
+            is_available: Ob die Sprache verfügbar ist (True/False)
+            
+        Returns:
+            Die ID des Verfügbarkeits-Eintrags
+        """
+        try:
+            current_time = int(time.time())
+            
+            # Prüfen, ob der Eintrag bereits existiert
+            cursor = self.db.execute(
+                "SELECT id FROM language_availability WHERE episode_id = ? AND language = ?", 
+                (episode_id, language)
+            )
+            existing = cursor.fetchone()
+            
+            if existing:
+                # Aktualisiere den bestehenden Eintrag
+                self.db.execute("""
+                    UPDATE language_availability 
+                    SET is_available = ?, last_checked = ?
+                    WHERE id = ?
+                """, (1 if is_available else 0, current_time, existing[0]))
+                entry_id = existing[0]
+            else:
+                # Füge einen neuen Eintrag hinzu
+                cursor = self.db.execute("""
+                    INSERT INTO language_availability 
+                    (episode_id, language, is_available, last_checked)
+                    VALUES (?, ?, ?, ?)
+                """, (episode_id, language, 1 if is_available else 0, current_time))
+                entry_id = cursor.lastrowid
+            
+            self.db.commit()
+            logging.debug(f"Sprachverfügbarkeit gespeichert für Episode ID {episode_id}, Sprache {language}: {is_available}")
+            return entry_id
+        except Exception as e:
+            logging.error(f"Fehler beim Speichern der Sprachverfügbarkeit für Episode ID {episode_id}, Sprache {language}: {e}")
+            return None
+
+    def get_language_availability(self, episode_id, language=None, max_age=86400):
+        """
+        Ruft die Verfügbarkeit von Sprachen für eine Episode ab.
+        
+        Args:
+            episode_id: Die ID der Episode
+            language: Die spezifische Sprache, die abgefragt werden soll (optional)
+            max_age: Maximales Alter der Daten in Sekunden (Standard: 24 Stunden)
+            
+        Returns:
+            Bei language=None: Dictionary mit Sprache als Schlüssel und Verfügbarkeit als Wert
+            Bei language spezifiziert: Boolean, ob die Sprache verfügbar ist, oder None wenn nicht bekannt
+        """
+        try:
+            current_time = int(time.time())
+            min_time = current_time - max_age
+            
+            if language:
+                # Abfrage für eine spezifische Sprache
+                cursor = self.db.execute("""
+                    SELECT is_available, last_checked
+                    FROM language_availability 
+                    WHERE episode_id = ? AND language = ?
+                """, (episode_id, language))
+                
+                row = cursor.fetchone()
+                if not row:
+                    return None
+                    
+                # Wenn der Eintrag zu alt ist, gib None zurück
+                if row[1] < min_time:
+                    return None
+                    
+                return bool(row[0])
+            else:
+                # Abfrage für alle Sprachen
+                cursor = self.db.execute("""
+                    SELECT language, is_available, last_checked
+                    FROM language_availability 
+                    WHERE episode_id = ?
+                """, (episode_id,))
+                
+                languages = {}
+                for row in cursor.fetchall():
+                    # Ignoriere zu alte Einträge
+                    if row[2] >= min_time:
+                        languages[row[0]] = bool(row[1])
+                        
+                return languages
+        except Exception as e:
+            logging.error(f"Fehler beim Abrufen der Sprachverfügbarkeit für Episode ID {episode_id}: {e}")
+            return {} if language is None else None
+
+    def is_language_available(self, slug, season_number, episode_number, language, max_age=86400):
+        """
+        Überprüft, ob eine bestimmte Sprache für eine Episode verfügbar ist.
+        
+        Args:
+            slug: Der Slug des Animes
+            season_number: Die Staffelnummer
+            episode_number: Die Episodennummer
+            language: Die zu prüfende Sprache
+            max_age: Maximales Alter der Daten in Sekunden (Standard: 24 Stunden)
+            
+        Returns:
+            Boolean, ob die Sprache verfügbar ist, oder None wenn nicht im Cache
+        """
+        try:
+            # Hole Anime-Metadaten
+            anime_data = self.get_anime_metadata(slug)
+            if not anime_data:
+                return None
+                
+            # Hole Staffeln
+            seasons = self.get_seasons_for_anime(anime_data['id'])
+            season_id = None
+            for season in seasons:
+                if season['season_number'] == season_number:
+                    season_id = season['id']
+                    break
+                    
+            if not season_id:
+                return None
+                
+            # Hole Episoden
+            episodes = self.get_episodes_for_season(season_id)
+            episode_id = None
+            for episode in episodes:
+                if episode['episode_number'] == episode_number:
+                    episode_id = episode['id']
+                    break
+                    
+            if not episode_id:
+                return None
+                
+            # Prüfe die Sprachverfügbarkeit
+            return self.get_language_availability(episode_id, language, max_age)
+        except Exception as e:
+            logging.error(f"Fehler beim Prüfen der Sprachverfügbarkeit für {slug}, S{season_number}E{episode_number}, {language}: {e}")
+            return None
+
+    def get_available_languages(self, slug, season_number, episode_number, max_age=86400):
+        """
+        Gibt alle verfügbaren Sprachen für eine Episode zurück.
+        
+        Args:
+            slug: Der Slug des Animes
+            season_number: Die Staffelnummer
+            episode_number: Die Episodennummer
+            max_age: Maximales Alter der Daten in Sekunden (Standard: 24 Stunden)
+            
+        Returns:
+            Liste der verfügbaren Sprachen oder leere Liste, wenn nicht im Cache
+        """
+        try:
+            # Hole Anime-Metadaten
+            anime_data = self.get_anime_metadata(slug)
+            if not anime_data:
+                return []
+                
+            # Hole Staffeln
+            seasons = self.get_seasons_for_anime(anime_data['id'])
+            season_id = None
+            for season in seasons:
+                if season['season_number'] == season_number:
+                    season_id = season['id']
+                    break
+                    
+            if not season_id:
+                return []
+                
+            # Hole Episoden
+            episodes = self.get_episodes_for_season(season_id)
+            episode_id = None
+            for episode in episodes:
+                if episode['episode_number'] == episode_number:
+                    episode_id = episode['id']
+                    break
+                    
+            if not episode_id:
+                return []
+                
+            # Prüfe die Sprachverfügbarkeit
+            languages = self.get_language_availability(episode_id, None, max_age)
+            return [lang for lang, available in languages.items() if available]
+        except Exception as e:
+            logging.error(f"Fehler beim Abrufen der verfügbaren Sprachen für {slug}, S{season_number}E{episode_number}: {e}")
+            return []
+
+    def invalidate_cache_for_anime(self, slug):
+        """
+        Markiert den Cache für einen Anime als veraltet, indem das last_updated auf 0 gesetzt wird.
+        
+        Args:
+            slug: Der Slug des Animes
+            
+        Returns:
+            Boolean, ob die Operation erfolgreich war
+        """
+        try:
+            # Hole die Anime-ID
+            cursor = self.db.execute("SELECT id FROM anime_metadata WHERE slug = ?", (slug,))
+            row = cursor.fetchone()
+            if not row:
+                return False
+                
+            anime_id = row[0]
+            
+            # Setze last_updated auf 0, damit der Eintrag als veraltet gilt
+            self.db.execute("UPDATE anime_metadata SET last_updated = 0 WHERE id = ?", (anime_id,))
+            self.db.commit()
+            
+            logging.debug(f"Cache für Anime {slug} wurde invalidiert")
+            return True
+        except Exception as e:
+            logging.error(f"Fehler beim Invalidieren des Caches für Anime {slug}: {e}")
+            return False
+
+    def get_last_scan_time(self, directory):
+        """
+        Gibt den Zeitpunkt des letzten Scans für ein bestimmtes Verzeichnis zurück.
+        
+        Args:
+            directory: Der zu prüfende Pfad
+            
+        Returns:
+            Zeitpunkt des letzten Scans als Unixzeit oder None, wenn kein Scan gefunden
+        """
+        try:
+            # Finde alle Überverzeichnisse, die gescannt werden könnten
+            potential_dirs = [directory]
+            
+            # Überverzeichnisse hinzufügen (z.B. für "/home/user/anime/show", auch "/home/user/anime" prüfen)
+            parent = os.path.dirname(directory)
+            while parent and parent != directory:
+                potential_dirs.append(parent)
+                directory = parent
+                parent = os.path.dirname(directory)
+            
+            # Suche nach dem neuesten Scan für alle möglichen Verzeichnisse
+            query = """
+                SELECT MAX(last_scan) 
+                FROM scan_history 
+                WHERE directory IN ({})
+            """.format(','.join(['?'] * len(potential_dirs)))
+            
+            cursor = self.db.execute(query, potential_dirs)
+            row = cursor.fetchone()
+            
+            if row and row[0]:
+                return row[0]
+            return None
+        except Exception as e:
+            logging.error(f"Fehler beim Abrufen des letzten Scan-Zeitpunkts für {directory}: {e}")
+            return None
 
 
 # Globale Instanz für den einfachen Zugriff
