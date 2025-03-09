@@ -6,6 +6,7 @@ import hashlib
 import logging
 import time
 import sys
+import traceback
 from typing import Dict, List, Optional, Any
 
 from bs4 import BeautifulSoup
@@ -559,47 +560,66 @@ def handle_syncplay_action(
     logging.debug("Syncplay has finished.\nBye bye!")
 
 
-def execute(params: Dict[str, Any]) -> None:
+def execute(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Führt die Verarbeitung einer Episode mit den angegebenen Parametern aus.
+    
+    Args:
+        params: Die Parameter für die Verarbeitung
+        
+    Returns:
+        Optional[Dict]: Bei Erfolg None, bei Fehler ein Dict mit Fehlermeldungen
+    """
     logging.debug("Executing with params: %s", params)
-    provider_mapping = {
-        "Vidoza": vidoza_get_direct_link,
-        "VOE": voe_get_direct_link,
-        "Doodstream": doodstream_get_direct_link,
-        "Streamtape": streamtape_get_direct_link,
-        "Vidmoly": vidmoly_get_direct_link,
-        "SpeedFiles": speedfiles_get_direct_link
-    }
 
-    selected_episodes = params['selected_episodes']
-    action_selected = params['action_selected']
-    aniskip_selected = bool(params.get("aniskip_selected", False))
-    lang = params['lang']
-    output_directory = params['output_directory']
-    anime_title = params['anime_title']
-    anime_slug = params['anime_slug']
-    only_direct_link = params.get('only_direct_link', False)
-    only_command = params.get('only_command', False)
-    provider_selected = params['provider_selected']
+    try:
+        if 'episode_url' in params:
+            # Neue Methode: Verarbeite eine einzelne Episode direkt
+            return process_episode(params)
+        elif 'selected_episodes' in params:
+            # Alte Methode: Verarbeite mehrere Episoden nacheinander
+            errors = []
+            for episode_url in params['selected_episodes']:
+                # Parameter für die Episode erstellen
+                episode_params = params.copy()
+                episode_params['episode_url'] = episode_url
+                if 'selected_episodes' in episode_params:
+                    del episode_params['selected_episodes']
+                
+                # Episode verarbeiten
+                result = process_episode(episode_params)
+                if result:  # Fehler aufgetreten
+                    errors.append(result)
+            
+            # Ergebnis zurückgeben
+            if errors:
+                return errors[0]  # Erstmal nur den ersten Fehler zurückgeben
+            return None
+        else:
+            logging.error("Weder episode_url noch selected_episodes in params angegeben")
+            return {
+                "error": "Fehlende Parameter",
+                "message": "Weder episode_url noch selected_episodes in params angegeben"
+            }
+    except Exception as e:
+        logging.exception(f"Unerwarteter Fehler bei der Ausführung: {e}")
+        return {
+            "error": "Ausführungsfehler",
+            "message": f"Unerwarteter Fehler: {str(e)}",
+            "details": traceback.format_exc()
+        }
 
-    logging.debug("aniskip_selected: %s", aniskip_selected)
 
-    for episode_url in selected_episodes:
-        process_episode({
-            'episode_url': episode_url,
-            'provider_mapping': provider_mapping,
-            'provider_selected': provider_selected,
-            'lang': lang,
-            'action_selected': action_selected,
-            'aniskip_selected': aniskip_selected,
-            'output_directory': output_directory,
-            'anime_title': anime_title,
-            "anime_slug": anime_slug,
-            'only_direct_link': only_direct_link,
-            'only_command': only_command
-        })
-
-
-def process_episode(params: Dict[str, Any]) -> None:
+def process_episode(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Verarbeitet eine Episode und führt die ausgewählte Aktion aus.
+    
+    Args:
+        params: Parameter für die Verarbeitung
+        
+    Returns:
+        Optional[Dict]: Bei Erfolg None, bei Fehler ein Dict mit Fehlermeldungen
+    """
     logging.debug("Processing episode with params: %s", params)
 
     try:
@@ -607,7 +627,11 @@ def process_episode(params: Dict[str, Any]) -> None:
 
         if not html_content:
             logging.error("Konnte keine HTML-Inhalte für URL abrufen: %s", params['episode_url'])
-            return
+            return {
+                "error": "Verbindungsfehler",
+                "message": f"Konnte keine HTML-Inhalte für die Episode abrufen.",
+                "details": "Bitte überprüfen Sie Ihre Internetverbindung oder versuchen Sie es später erneut."
+            }
 
         soup = BeautifulSoup(html_content, 'html.parser')
         provider_data = providers(soup)
@@ -644,7 +668,7 @@ def process_episode(params: Dict[str, Any]) -> None:
                 logging.info("Versuche Provider: %s", provider)
                 try:
                     process_provider(provider, provider_data, params, anime_title, season_title, episode_title)
-                    return  # Successful, exit
+                    return None  # Erfolg - kein Fehler
                 except ValueError as e:
                     logging.warning("Provider %s fehlgeschlagen: %s", provider, str(e))
                     continue  # Try the next provider
@@ -654,36 +678,36 @@ def process_episode(params: Dict[str, Any]) -> None:
 
         # If we reached here, all providers failed
         if provider_tried:
-            logging.error("Alle verfügbaren Provider sind fehlgeschlagen für Episode: %s", params['episode_url'])
-            
-            # Gib dem Benutzer eine klare Fehlermeldung über das UI
-            print("\nFehler: Keine Provider für die ausgewählte Sprache verfügbar.")
-            print("Verfügbare Sprachen für diese Episode:")
-            
-            # Zeige verfügbare Sprachen an
+            # Sammle alle verfügbaren Sprachen
             available_languages = set()
             for provider in provider_data:
                 for lang_key in provider_data[provider]:
                     lang = get_language_string(lang_key)
                     available_languages.add(lang)
             
-            if available_languages:
-                for lang in available_languages:
-                    print(f" - {lang}")
-                print("\nBitte wählen Sie eine der verfügbaren Sprachen mit --language.")
-            else:
-                print(" - Keine Sprachen verfügbar.")
-            
-            # Warte, damit der Benutzer die Meldung lesen kann, bevor das Programm beendet wird
-            time.sleep(5)
+            logging.error("Alle verfügbaren Provider sind fehlgeschlagen für Episode: %s", params['episode_url'])
+            return {
+                "error": "Keine passenden Provider",
+                "message": f"Keine Provider für {get_language_string(int(params['language']))} verfügbar.",
+                "available_languages": sorted(list(available_languages)),
+                "episode_url": params['episode_url']
+            }
         else:
             logging.error("Keine unterstützten Provider für die URL verfügbar: %s", params['episode_url'])
-            print("\nFehler: Keine unterstützten Provider für diese Episode gefunden.")
-            time.sleep(3)
+            return {
+                "error": "Keine Provider",
+                "message": "Keine unterstützten Provider für diese Episode gefunden.",
+                "available_languages": [],
+                "episode_url": params['episode_url']
+            }
     except Exception as e:
         logging.exception("Fehler bei der Verarbeitung der Episode: %s", e)
-        print(f"\nFehler bei der Verarbeitung der Episode: {e}")
-        time.sleep(3)
+        return {
+            "error": "Verarbeitungsfehler",
+            "message": f"Fehler bei der Verarbeitung der Episode: {str(e)}",
+            "details": traceback.format_exc(),
+            "episode_url": params.get('episode_url', 'Unbekannt')
+        }
 
 
 def process_provider(provider: str, provider_data: dict, params: dict, anime_title: str, season_title: str, episode_title: str) -> None:

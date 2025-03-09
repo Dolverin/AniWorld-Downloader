@@ -17,6 +17,8 @@ import socket
 import colorlog
 from queue import Queue
 import time
+from bs4 import BeautifulSoup
+from typing import Dict, Any
 
 import npyscreen
 
@@ -45,7 +47,9 @@ from aniworld.common import (
     adventure,
     get_description,
     get_description_with_id,
-    check_if_episode_exists
+    check_if_episode_exists,
+    fetch_url_content,
+    get_language_string
 )
 from aniworld.extractors import (
     nhentai,
@@ -55,6 +59,7 @@ from aniworld.extractors import (
 )
 
 from aniworld.globals import DEFAULT_DOWNLOAD_PATH
+from aniworld.execute import providers
 
 
 def format_anime_title(anime_slug):
@@ -201,6 +206,9 @@ class EpisodeForm(npyscreen.ActionForm):
             scroll_exit=True
         )
         logging.debug("Language selector created")
+
+        # Event-Handler für Sprachänderung hinzufügen
+        self.language_selector.when_value_edited = self.filter_episodes_by_language
 
         self.provider_selector = self.add(
             npyscreen.TitleSelectOne,
@@ -447,27 +455,41 @@ class EpisodeForm(npyscreen.ActionForm):
             os.makedirs(output_directory, exist_ok=True)
             logging.debug("Output directory created: %s", output_directory)
 
+        # Für jede Episode ein eigenes Parameter-Objekt erstellen
         for episode_url in selected_urls:
             params = {
-                'selected_episodes': [episode_url],
+                'episode_url': episode_url,
                 'provider_selected': provider_selected,
                 'action_selected': action_selected[0],
                 'aniskip_selected': aniskip_selected,
                 'lang': lang,
                 'output_directory': output_directory,
                 'anime_title': format_anime_title(self.parentApp.anime_slug),
-                'anime_slug': self.parentApp.anime_slug
+                'anime_slug': self.parentApp.anime_slug,
+                'only_direct_link': False,
+                'only_command': False,
+                'force_download': False
             }
 
-            logging.debug("Executing with params: %s", params)
-            execute(params)
+            # Führe die Verarbeitung in einem separaten Thread aus, um das UI nicht zu blockieren
+            threading.Thread(target=self.__execute_and_exit, args=(params,), daemon=True).start()
+            return  # Nach dem Start des Threads sofort zurückkehren
 
-        if not self.directory_field.hidden:
-            logging.debug("Cleaning up leftovers in: %s", output_directory)
-            clean_up_leftovers(output_directory)
-
-        self.parentApp.setNextForm(None)
-        self.parentApp.switchFormNow()
+    def __execute_and_exit(self, params):
+        try:
+            execute_with_params(params)
+        except Exception as e:
+            logging.exception(f"Fehler beim Ausführen der Episode: {e}")
+            # Zeige Fehler im TUI an
+            npyscreen.notify_confirm(
+                f"Fehler beim Ausführen der Episode: {str(e)}",
+                title="Fehler",
+                form_color="DANGER",
+                wrap=True
+            )
+        finally:
+            # Schließe das Formular nach der Ausführung (egal ob erfolgreicher oder fehlerhafter Ausführung)
+            self.parentApp.switchForm(None)
 
     def get_language_code(self, language):
         logging.debug("Getting language code for: %s", language)
@@ -489,6 +511,181 @@ class EpisodeForm(npyscreen.ActionForm):
             self.provider_selector.value = 0
             provider_selected = ["Vidoza"]
         return provider_selected[0]
+
+    def check_available_languages(self, episode_url):
+        """
+        Prüft, welche Sprachen für eine bestimmte Episode verfügbar sind.
+        
+        Args:
+            episode_url: Die URL der Episode
+            
+        Returns:
+            Ein Set mit den verfügbaren Sprachen ("German Dub", "English Sub", "German Sub")
+        """
+        logging.debug(f"Prüfe verfügbare Sprachen für: {episode_url}")
+        available_languages = set()
+        
+        try:
+            # HTML-Content der Episode laden
+            html_content = fetch_url_content(episode_url)
+            if not html_content:
+                logging.error(f"Konnte keine HTML-Inhalte für URL abrufen: {episode_url}")
+                return available_languages
+                
+            # Provider-Daten extrahieren
+            soup = BeautifulSoup(html_content, 'html.parser')
+            provider_data = providers(soup)
+            
+            # Verfügbare Sprachen sammeln
+            for provider in provider_data:
+                for lang_key in provider_data[provider]:
+                    lang = get_language_string(int(lang_key))
+                    available_languages.add(lang)
+                    
+            logging.debug(f"Verfügbare Sprachen für {episode_url}: {available_languages}")
+            return available_languages
+            
+        except Exception as e:
+            logging.error(f"Fehler bei der Prüfung der verfügbaren Sprachen: {e}")
+            return available_languages
+            
+    def filter_episodes_by_language(self, *args):
+        """
+        Filtert die Episodenliste basierend auf der ausgewählten Sprache.
+        Wird als Event-Handler für den Language-Selector verwendet.
+        """
+        if not hasattr(self, 'original_episode_list'):
+            # Beim ersten Aufruf die ursprüngliche Liste speichern
+            self.original_episode_list = self.episode_selector.values.copy()
+            self.original_episode_map = self.episode_map.copy()
+        
+        # Ausgewählte Sprache
+        selected_language = ["German Dub", "English Sub", "German Sub"][self.language_selector.value[0]]
+        
+        # Status-Nachricht aktualisieren
+        self.status_text.value = f"Prüfe verfügbare Episoden für {selected_language}..."
+        self.display()
+        
+        # Episoden-URLs und ihre Verfügbarkeit in einem Dictionary speichern
+        filtered_episodes = []
+        filtered_map = {}
+        
+        # Thread-Funktion für die Prüfung
+        def check_language_availability():
+            results = {}
+            count = 0
+            total = len(self.original_episode_map)
+            
+            for title, url in self.original_episode_map.items():
+                count += 1
+                if count % 5 == 0:
+                    self.status_text.value = f"Prüfe Sprachen... ({count}/{total})"
+                    self.display()
+                
+                # Verfügbare Sprachen prüfen
+                available_langs = self.check_available_languages(url)
+                results[title] = selected_language in available_langs
+            
+            return results
+            
+        # Thread starten
+        availability_thread = threading.Thread(target=lambda: self.update_episode_list(check_language_availability))
+        availability_thread.daemon = True
+        availability_thread.start()
+        
+    def update_episode_list(self, check_function):
+        """
+        Aktualisiert die Episodenliste basierend auf den Ergebnissen der Sprachverfügbarkeitsprüfung.
+        
+        Args:
+            check_function: Eine Funktion, die ein Dictionary mit Episodenname -> Verfügbarkeit zurückgibt
+        """
+        # Ausgewählte Sprache
+        selected_language = ["German Dub", "English Sub", "German Sub"][self.language_selector.value[0]]
+        
+        try:
+            # Verfügbarkeit prüfen
+            availability_results = check_function()
+            
+            # Gefilterte Listen erstellen
+            filtered_episodes = []
+            filtered_map = {}
+            
+            for title, is_available in availability_results.items():
+                if is_available:
+                    filtered_episodes.append(title)
+                    filtered_map[title] = self.original_episode_map[title]
+            
+            # Episodenliste aktualisieren
+            self.episode_selector.values = filtered_episodes
+            self.episode_map = filtered_map
+            
+            # Season-Maps aktualisieren
+            self.update_season_maps()
+            
+            # Anzeige aktualisieren
+            self.episode_selector.display()
+            
+            # Status-Nachricht aktualisieren
+            if len(filtered_episodes) == 0:
+                # Keine Episoden in dieser Sprache verfügbar
+                message = f"Keine Episoden in {selected_language} verfügbar."
+                self.status_text.value = message
+                
+                # Kurz verzögern, dann Fehlermeldung anzeigen
+                threading.Timer(0.5, lambda: npyscreen.notify_confirm(
+                    f"Für diesen Anime sind keine Episoden in {selected_language} verfügbar.\n"
+                    f"Bitte wählen Sie eine andere Sprache.",
+                    title="Keine Episoden verfügbar"
+                )).start()
+                
+                # Sprache auf die erste verfügbare zurücksetzen
+                all_available_langs = set()
+                for _, avail in availability_results.items():
+                    if avail:
+                        all_available_langs.add(title)
+                
+                if all_available_langs:
+                    self.episode_selector.values = list(self.original_episode_list)
+                    self.episode_map = dict(self.original_episode_map)
+                
+            elif len(filtered_episodes) < len(self.original_episode_list):
+                # Nur teilweise verfügbar
+                self.status_text.value = f"{len(filtered_episodes)} von {len(self.original_episode_list)} Episoden sind in {selected_language} verfügbar."
+            else:
+                # Alle verfügbar
+                self.status_text.value = f"Alle {len(filtered_episodes)} Episoden sind in {selected_language} verfügbar."
+                
+            self.display()
+            
+        except Exception as e:
+            logging.error(f"Fehler beim Aktualisieren der Episodenliste: {e}")
+            self.status_text.value = f"Fehler beim Filtern: {str(e)}"
+            self.display()
+            
+            # Fehlermeldung anzeigen
+            npyscreen.notify_confirm(
+                f"Fehler bei der Prüfung der verfügbaren Sprachen:\n{str(e)}",
+                title="Fehler"
+            )
+            
+    def update_season_maps(self):
+        """Aktualisiert die seasons_map basierend auf den gefilterten Episoden"""
+        # Zurücksetzen der seasons_map
+        self.seasons_map = {}
+        
+        # Neu aufbauen basierend auf den gefilterten Episoden
+        for title in self.episode_selector.values:
+            if title in self.episode_info:
+                season, episode = self.episode_info[title]
+                if season not in self.seasons_map:
+                    self.seasons_map[season] = []
+                self.seasons_map[season].append((episode, title))
+        
+        # Staffel-Dropdown aktualisieren
+        self.season_selector.values = ["Staffel " + str(season) if season > 0 else "Filme" 
+                                   for season in sorted(self.seasons_map.keys())]
+        self.season_selector.display()
 
     def on_cancel(self):
         logging.debug("Cancel button pressed")
@@ -1349,25 +1546,52 @@ def check_other_extractors(episode_urls: list):
     return remaining_urls
 
 
-def execute_with_params(args, selected_episodes, anime_title, language, anime_slug):
-    selected_episodes = check_other_extractors(selected_episodes)
-    logging.debug("Aniworld episodes: %s", selected_episodes)
-
-    params = {
-        'selected_episodes': selected_episodes,
-        'provider_selected': args.provider,
-        'action_selected': args.action,
-        'aniskip_selected': args.aniskip,
-        'lang': language,
-        'output_directory': args.output,
-        'anime_title': anime_title.replace('-', ' ').title(),
-        'anime_slug': anime_slug,
-        'only_direct_link': args.only_direct_link,
-        'only_command': args.only_command,
-        'debug': args.debug
-    }
-    logging.debug("Executing with params: %s", params)
-    execute(params=params)
+def execute_with_params(params: Dict[str, Any]) -> None:
+    """
+    Führt die Verarbeitung mit den angegebenen Parametern aus und zeigt Fehlermeldungen im TUI an
+    """
+    from aniworld.execute import execute
+    
+    try:
+        only_direct_link = params.get('only_direct_link', False)
+        only_command = params.get('only_command', False)
+        force_download = params.get('force_download', False)
+        
+        result = execute(params)
+        
+        if result:  # Fehler aufgetreten
+            error_msg = result.get("message", "Unbekannter Fehler")
+            available_langs = result.get("available_languages", [])
+            
+            if "keine Streams verfügbar" in error_msg.lower() and available_langs:
+                langs_str = ", ".join(available_langs)
+                error_msg = f"Keine Streams für die gewählte Sprache verfügbar.\nVerfügbare Sprachen: {langs_str}"
+            
+            # Fehlermeldung im TUI anzeigen
+            npyscreen.notify_confirm(
+                error_msg,
+                title="Fehler bei der Ausführung",
+                form_color="DANGER",
+                wrap=True,
+                wide=True
+            )
+        elif not (only_direct_link or only_command):
+            npyscreen.notify_confirm(
+                "Ausführung erfolgreich abgeschlossen!",
+                title="Erfolg",
+                form_color="GOOD",
+                wrap=True
+            )
+            
+    except Exception as e:
+        npyscreen.notify_confirm(
+            f"Unerwarteter Fehler: {str(e)}",
+            title="Fehler",
+            form_color="DANGER",
+            wrap=True,
+            wide=True
+        )
+        logging.exception("Unerwarteter Fehler in execute_with_params:")
 
 
 def run_app_with_query(args):
