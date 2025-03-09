@@ -1167,11 +1167,14 @@ class EpisodeForm(npyscreen.ActionForm):
                 self.tor_label.value = f"Aktiv (extern) - Tor {get_tor_version()}"
                 logging.info("Tor läuft, obwohl es in der Anwendung deaktiviert ist")
             
-            # Thread für IP-Abfrage starten, um UI nicht zu blockieren
+            # IP-Abfrage starten
+            self.tor_ip_text.value = "IP wird abgerufen..."
+            self.display()
+            
+            # Thread für IP-Abfrage definieren
             def update_ip_thread():
                 try:
                     # Hole den Tor-Client IMMER mit use_tor=True, wenn der Dienst läuft
-                    # Dies ignoriert die globale USE_TOR-Variable für die IP-Abfrage
                     tor_client = get_tor_client(use_tor=True)
                     
                     # Überprüfe, ob der Tor-Client wirklich läuft
@@ -1186,15 +1189,37 @@ class EpisodeForm(npyscreen.ActionForm):
                             npyscreen.globals.MAINLOOP.schedule_task_in_main_thread(update_ui_error)
                         return
                     
-                    # IP-Adresse abrufen
-                    ip = tor_client.get_current_ip()
+                    # IP-Adresse abrufen mit Timeout
+                    ip_future = None
+                    max_wait_time = 20  # Sekunden
+                    
+                    def get_ip_with_timeout():
+                        try:
+                            return tor_client.get_current_ip()
+                        except Exception as e:
+                            logging.error(f"Fehler im IP-Abfrage-Thread: {str(e)}")
+                            return None
+                    
+                    # IP-Abfrage in separatem Thread starten
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        ip_future = executor.submit(get_ip_with_timeout)
+                        try:
+                            # Mit Timeout auf Ergebnis warten
+                            ip = ip_future.result(timeout=max_wait_time)
+                        except concurrent.futures.TimeoutError:
+                            ip = None
+                            logging.error(f"Timeout bei IP-Abfrage nach {max_wait_time} Sekunden")
                     
                     # UI-Update in Hauptthread durchführen
                     def update_ui():
                         if ip:
                             self.tor_ip_text.value = ip
+                        elif ip is None:
+                            self.tor_ip_text.value = "IP-Abfrage fehlgeschlagen. Prüfe deine Verbindung."
+                            logging.error("IP-Abfrage fehlgeschlagen")
                         else:
-                            self.tor_ip_text.value = "IP-Adresse konnte nicht abgerufen werden. Tor möglicherweise nicht korrekt konfiguriert."
+                            self.tor_ip_text.value = "IP-Adresse konnte nicht abgerufen werden."
                         self.display()
                     
                     # UI-Update ausführen
@@ -1204,6 +1229,14 @@ class EpisodeForm(npyscreen.ActionForm):
                     logging.error(f"Fehler beim Abrufen der IP-Adresse: {str(e)}")
                     import traceback
                     logging.debug(f"Traceback: {traceback.format_exc()}")
+                    
+                    # Auch bei Fehlern UI aktualisieren
+                    def update_ui_on_error():
+                        self.tor_ip_text.value = f"Fehler bei IP-Abfrage: {str(e)[:30]}..."
+                        self.display()
+                    
+                    if hasattr(self, 'parentApp') and hasattr(self.parentApp, '_Forms'):
+                        npyscreen.globals.MAINLOOP.schedule_task_in_main_thread(update_ui_on_error)
             
             # Thread starten
             threading.Thread(target=update_ip_thread, daemon=True).start()

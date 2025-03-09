@@ -212,19 +212,55 @@ class TorClient:
     def get_current_ip(self) -> Optional[str]:
         """Holt die aktuelle IP-Adresse über das Tor-Netzwerk."""
         if not self.is_running:
+            logging.warning("Versuche IP abzurufen, aber Tor läuft nicht")
             return None
             
         proxies = self.get_proxy_dict()
-        try:
-            response = requests.get(
-                "https://api.ipify.org",
-                proxies=proxies,
-                timeout=30
-            )
-            return response.text.strip()
-        except requests.RequestException as e:
-            logging.error(f"Fehler beim Abrufen der IP-Adresse: {str(e)}")
-            return None
+        
+        # Liste von IP-Check-Services für Fallback
+        ip_services = [
+            "https://api.ipify.org",
+            "https://ifconfig.me/ip",
+            "https://ipinfo.io/ip",
+            "https://checkip.amazonaws.com"
+        ]
+        
+        # Reduzierter Timeout für schnellere Fehlerbehandlung
+        timeout = 15
+        
+        # Versuche jeden Service nacheinander
+        for service_url in ip_services:
+            try:
+                logging.debug(f"Versuche IP-Adresse über {service_url} abzurufen")
+                response = requests.get(
+                    service_url,
+                    proxies=proxies,
+                    timeout=timeout
+                )
+                
+                if response.status_code == 200:
+                    ip = response.text.strip()
+                    # Validiere grob, ob es eine IP sein könnte (mindestens ein Punkt enthalten)
+                    if "." in ip and len(ip) <= 45:  # IPv4 oder IPv6
+                        logging.info(f"IP-Adresse erfolgreich abgerufen: {ip[:3]}...{ip[-3:]}")
+                        return ip
+                    else:
+                        logging.warning(f"Ungültiges IP-Format von {service_url}: {ip[:10]}...")
+                else:
+                    logging.warning(f"Fehler beim Abrufen der IP von {service_url}: HTTP {response.status_code}")
+                
+            except requests.exceptions.Timeout:
+                logging.warning(f"Timeout beim Abrufen der IP-Adresse von {service_url}")
+            except requests.exceptions.ConnectionError as e:
+                logging.warning(f"Verbindungsfehler beim Abrufen der IP-Adresse von {service_url}: {str(e)}")
+            except requests.RequestException as e:
+                logging.error(f"Fehler beim Abrufen der IP-Adresse von {service_url}: {str(e)}")
+            
+            # Kurze Pause vor dem nächsten Versuch
+            time.sleep(1)
+            
+        logging.error("Konnte IP-Adresse über keine der verfügbaren Services abrufen")
+        return None
             
     def get_proxy_dict(self) -> Dict[str, str]:
         """Gibt die Proxy-Konfiguration für Tor zurück."""
