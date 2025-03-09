@@ -1027,11 +1027,10 @@ class EpisodeForm(npyscreen.ActionForm):
         self.display()
 
     def update_tor_status(self):
-        """Aktualisiert den Tor-Status basierend auf der Benutzerauswahl."""
-        selected_option = self.tor_selector.value[0]
-        new_tor_status = selected_option == 0  # Aktivieren = 0, Deaktivieren = 1
+        """Aktualisiert den Tor-Status basierend auf der UI-Auswahl."""
+        new_tor_index = self.tor_selector.value[0] if self.tor_selector.value else 0
+        new_tor_status = new_tor_index == 0  # 0 = Aktivieren, 1 = Deaktivieren
         
-        # Status aktualisieren
         if new_tor_status != aniworld_globals.USE_TOR:
             self.status_text.value = f"Tor-Status wird auf {'aktiviert' if new_tor_status else 'deaktiviert'} gesetzt..."
             self.display()
@@ -1039,6 +1038,14 @@ class EpisodeForm(npyscreen.ActionForm):
             try:
                 # Tor-Client aktualisieren
                 from aniworld.common.tor_client import get_tor_client
+                from aniworld.common import is_tor_running, get_tor_version
+                
+                # Prüfe, ob Tor installiert ist
+                if new_tor_status and get_tor_version() == "nicht installiert":
+                    self.status_text.value = "Tor ist nicht installiert. Bitte installieren Sie Tor, bevor Sie es aktivieren."
+                    self.tor_selector.value = [1]  # Deaktivieren erzwingen
+                    self.display()
+                    return
                 
                 # Setze globale Variable
                 aniworld_globals.USE_TOR = new_tor_status
@@ -1052,10 +1059,34 @@ class EpisodeForm(npyscreen.ActionForm):
                     self.status_text.value = "Tor wird gestartet..."
                     self.display()
                     
-                    if tor_client.start():
-                        self.status_text.value = "Tor wurde erfolgreich aktiviert"
+                    # Versuche mehrmals zu starten (max. 3 Versuche)
+                    max_attempts = 3
+                    success = False
+                    
+                    for attempt in range(max_attempts):
+                        if attempt > 0:
+                            self.status_text.value = f"Tor-Startversuch {attempt+1}/{max_attempts}..."
+                            self.display()
+                        
+                        if tor_client.start():
+                            success = True
+                            break
+                        else:
+                            # Warte kurz vor dem nächsten Versuch
+                            time.sleep(1)
+                    
+                    if success:
+                        # Überprüfe durch eine separate Systemprüfung
+                        if is_tor_running():
+                            self.status_text.value = "Tor wurde erfolgreich aktiviert"
+                        else:
+                            self.status_text.value = "Tor wurde gestartet, aber der Dienst scheint nicht zu laufen. Bitte prüfen Sie Ihre Installation."
                     else:
-                        self.status_text.value = "Fehler beim Starten von Tor"
+                        self.status_text.value = "Fehler beim Starten von Tor nach mehreren Versuchen"
+                        # Setze den Status zurück, wenn es nicht gestartet werden konnte
+                        aniworld_globals.USE_TOR = False
+                        os.environ['USE_TOR'] = 'False'
+                        self.tor_selector.value = [1]  # Deaktivieren
                 else:
                     # Stoppe Tor, wenn deaktiviert
                     self.status_text.value = "Tor wird gestoppt..."
@@ -1071,6 +1102,10 @@ class EpisodeForm(npyscreen.ActionForm):
                 self.status_text.value = "Tor-Unterstützung ist nicht verfügbar. Bitte installieren Sie die erforderlichen Module (stem, PySocks)."
             except Exception as e:
                 self.status_text.value = f"Fehler bei Tor-Aktivierung: {str(e)}"
+                # Fehler-Logging für die Diagnose
+                import traceback
+                logging.error(f"Tor-Aktivierungsfehler: {str(e)}")
+                logging.debug(f"Traceback: {traceback.format_exc()}")
                 
             # UI-Elemente aktualisieren
             self.tor_selector.value = [0 if aniworld_globals.USE_TOR else 1]
@@ -1114,11 +1149,32 @@ class EpisodeForm(npyscreen.ActionForm):
         if aniworld_globals.USE_TOR:
             try:
                 from aniworld.common.tor_client import get_tor_client
+                from aniworld.common import is_tor_running
+                
+                # Prüfen, ob Tor-Dienst tatsächlich läuft
+                if not is_tor_running():
+                    self.tor_ip_text.value = "Tor-Dienst läuft nicht. Bitte starte Tor neu."
+                    self.display()
+                    return
                 
                 # Thread für IP-Abfrage starten, um UI nicht zu blockieren
                 def update_ip_thread():
                     try:
                         tor_client = get_tor_client(use_tor=True)
+                        
+                        # Überprüfe, ob der Tor-Client wirklich läuft
+                        if not tor_client.is_running:
+                            def update_ui_error():
+                                self.tor_ip_text.value = "Tor-Client läuft nicht. Status wird korrigiert..."
+                                self.display()
+                                # Starte Tor, falls globale Variable sagt, dass es laufen sollte
+                                tor_client.start()
+                            
+                            if hasattr(self, 'parentApp') and hasattr(self.parentApp, '_Forms'):
+                                npyscreen.globals.MAINLOOP.schedule_task_in_main_thread(update_ui_error)
+                            return
+                        
+                        # IP-Adresse abrufen
                         ip = tor_client.get_current_ip()
                         
                         # UI-Update in Hauptthread durchführen
@@ -1126,7 +1182,7 @@ class EpisodeForm(npyscreen.ActionForm):
                             if ip:
                                 self.tor_ip_text.value = ip
                             else:
-                                self.tor_ip_text.value = "IP-Adresse konnte nicht abgerufen werden"
+                                self.tor_ip_text.value = "IP-Adresse konnte nicht abgerufen werden. Tor möglicherweise nicht korrekt konfiguriert."
                             self.display()
                         
                         # UI-Update ausführen
@@ -1134,6 +1190,8 @@ class EpisodeForm(npyscreen.ActionForm):
                             npyscreen.globals.MAINLOOP.schedule_task_in_main_thread(update_ui)
                     except Exception as e:
                         logging.error(f"Fehler beim Abrufen der IP-Adresse: {str(e)}")
+                        import traceback
+                        logging.debug(f"Traceback: {traceback.format_exc()}")
                 
                 # Thread starten
                 threading.Thread(target=update_ip_thread, daemon=True).start()
