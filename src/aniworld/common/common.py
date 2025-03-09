@@ -501,110 +501,239 @@ def raise_runtime_error(message: str) -> None:
 
 
 def get_season_episode_count(slug: str, season: str) -> int:
+    """
+    Ermittelt die Anzahl der Episoden einer Staffel.
+    
+    Args:
+        slug: Der Anime-Slug
+        season: Die Staffelnummer
+        
+    Returns:
+        Anzahl der Episoden oder 0 bei Fehler
+    """
     series_url = f"https://aniworld.to/anime/stream/{slug}/staffel-{season}"
-
-    response = requests.get(series_url, timeout=15)
-    soup = BeautifulSoup(response.content, 'html.parser')
-    episode_numbers = []
-    counter = 1
-    while True:
-        target = f"{slug}/staffel-{season}/episode-{counter}"
-
-        matching_links = []
-        for link in soup.find_all('a', href=True):
-            if target in link['href']:
-                matching_links.append(link['href'])
-        if matching_links:
-            episode_numbers.append(counter)
-            counter += 1
-        else:
-            break
-
-    return max(episode_numbers) if episode_numbers else 0
+    
+    try:
+        logging.debug(f"Hole Episodenzahl für {slug} Staffel {season}")
+        
+        # Verwende fetch_url_content statt direktem requests.get für bessere Fehlerbehandlung
+        content = fetch_url_content(series_url, check=True)
+        
+        if not content:
+            logging.warning(f"Konnte keine Daten für {series_url} abrufen, versuche Fallback")
+            # Fallback: Forciere Playwright als Zweiten Versuch
+            os.environ["USE_PLAYWRIGHT"] = "True"
+            content = fetch_url_content(series_url, check=True)
+            os.environ.pop("USE_PLAYWRIGHT", None)  # Zurücksetzen
+            
+            # Wenn immer noch kein Inhalt, gib 0 zurück
+            if not content:
+                logging.error(f"Konnte keine Daten für {series_url} abrufen, auch nicht mit Playwright")
+                return 0
+        
+        soup = BeautifulSoup(content, 'html.parser')
+        episode_numbers = []
+        counter = 1
+        max_attempts = 100  # Maximale Episodenzahl zur Vermeidung von Endlosschleifen
+        
+        while counter <= max_attempts:
+            target = f"{slug}/staffel-{season}/episode-{counter}"
+            
+            matching_links = []
+            for link in soup.find_all('a', href=True):
+                if target in link['href']:
+                    matching_links.append(link['href'])
+            
+            if matching_links:
+                episode_numbers.append(counter)
+                counter += 1
+            else:
+                break  # Keine weiteren Episoden gefunden
+        
+        episode_count = len(episode_numbers)
+        logging.debug(f"Gefunden: {episode_count} Episoden für {slug} Staffel {season}")
+        
+        return episode_count
+    except Exception as e:
+        logging.error(f"Fehler beim Ermitteln der Episodenzahl für {slug} Staffel {season}: {e}")
+        return 0
 
 
 def get_season_episodes(season_url):
-    episode_urls = []
-
-    logging.debug("Season URL: %s", season_url)
-
-    parts = season_url.split('/')
-
-    slug = parts[-1]
-    season = slug.split('-')[-1]
-
-    slug = parts[-2]
-
-    logging.debug("Slug: %s", slug)
-    logging.debug("Season: %s", season)
-
-    for i in range(1, get_season_episode_count(slug, season) + 1):
-        episode_urls.append(f"{season_url}/episode-{i}")
-
-    logging.debug("Episode URLs: %s", episode_urls)
-    return episode_urls
+    """
+    Ermittelt alle Episode-URLs für eine bestimmte Staffel.
+    
+    Args:
+        season_url: Die URL der Staffel
+        
+    Returns:
+        Liste von Episode-URLs oder leere Liste bei Fehler
+    """
+    try:
+        episode_urls = []
+        
+        logging.debug("Season URL: %s", season_url)
+        
+        # URL-Teile extrahieren
+        parts = season_url.split('/')
+        
+        slug = parts[-1]
+        season = slug.split('-')[-1]
+        slug = parts[-2]
+        
+        logging.debug("Slug: %s", slug)
+        logging.debug("Season: %s", season)
+        
+        # Episodenanzahl ermitteln mit Robustheit
+        episode_count = get_season_episode_count(slug, season)
+        
+        if episode_count <= 0:
+            logging.warning(f"Keine Episoden für {slug} Staffel {season} gefunden oder Fehler aufgetreten")
+            return []
+            
+        # Episode-URLs erzeugen
+        for i in range(1, episode_count + 1):
+            episode_urls.append(f"{season_url}/episode-{i}")
+            
+        logging.debug(f"Gefunden: {len(episode_urls)} Episode-URLs für {slug} Staffel {season}")
+        return episode_urls
+        
+    except Exception as e:
+        logging.error(f"Fehler beim Ermitteln der Episoden für {season_url}: {e}")
+        return []
 
 
 def get_movies_episode_count(slug: str) -> int:
-    movie_url = f"https://aniworld.to/anime/stream/{slug}/filme"
-    season_html = fetch_url_content(movie_url)
-    if season_html is None:
+    """
+    Ermittelt die Anzahl der Filme eines Animes.
+    
+    Args:
+        slug: Der Anime-Slug
+        
+    Returns:
+        Anzahl der Filme oder 0 bei Fehler
+    """
+    try:
+        movie_url = f"https://aniworld.to/anime/stream/{slug}/filme"
+        logging.debug(f"Hole Filmanzahl für {slug}")
+        
+        # Mit verbesserter Fehlerbehandlung
+        season_html = fetch_url_content(movie_url)
+        if season_html is None:
+            logging.warning(f"Konnte keine Daten für {movie_url} abrufen, versuche Fallback")
+            # Fallback: Forciere Playwright als Zweiten Versuch
+            os.environ["USE_PLAYWRIGHT"] = "True" 
+            season_html = fetch_url_content(movie_url, check=True)
+            os.environ.pop("USE_PLAYWRIGHT", None)  # Zurücksetzen
+            
+            if not season_html:
+                logging.error(f"Konnte keine Filmdaten für {slug} abrufen")
+                return 0
+                
+        soup = BeautifulSoup(season_html, 'html.parser')
+    
+        movie_numbers = []
+        counter = 1
+        max_attempts = 50  # Maximale Filmanzahl zur Vermeidung von Endlosschleifen
+        
+        while counter <= max_attempts:
+            target = f"{slug}/filme/film-{counter}"
+    
+            matching_links = []
+            for link in soup.find_all('a', href=True):
+                if target in link['href']:
+                    matching_links.append(link['href'])
+                    
+            if matching_links:
+                movie_numbers.append(counter)
+                counter += 1
+            else:
+                break
+    
+        movie_count = max(movie_numbers) if movie_numbers else 0
+        logging.debug(f"Gefunden: {movie_count} Filme für {slug}")
+        return movie_count
+        
+    except Exception as e:
+        logging.error(f"Fehler beim Ermitteln der Filmanzahl für {slug}: {e}")
         return 0
-    soup = BeautifulSoup(season_html, 'html.parser')
-
-    movie_numbers = []
-    counter = 1
-    while True:
-        target = f"{slug}/filme/film-{counter}"
-
-        matching_links = []
-        for link in soup.find_all('a', href=True):
-            if target in link['href']:
-                matching_links.append(link['href'])
-        if matching_links:
-            movie_numbers.append(counter)
-            counter += 1
-        else:
-            break
-
-    return max(movie_numbers) if movie_numbers else 0
 
 
 def get_season_data(anime_slug: str):
-    base_url_template = "https://aniworld.to/anime/stream/{anime}/"
-    base_url = base_url_template.format(anime=anime_slug)
-
-    logging.debug("Fetching Base URL %s", base_url)
-    main_html = fetch_url_content(base_url)
-    if main_html is None:
-        logging.critical("Failed to retrieve main page.")
-        sys.exit(1)
-
-    soup = BeautifulSoup(main_html, 'html.parser')
-    season_meta = soup.find('meta', itemprop='numberOfSeasons')
-    number_of_seasons = int(season_meta['content']) if season_meta else 0
-
-    movies = False
-
-    if soup.find('a', title='Alle Filme'):
-        number_of_seasons -= 1
-        movies = True
-
-    season_data = []
-    for i in range(1, number_of_seasons + 1):
-        season_url = f"{base_url}staffel-{i}"
-        season_data.extend(get_season_episodes(season_url))
-
-    if movies:
-        movie_data = []
-        number_of_movies = get_movies_episode_count(anime_slug)
-        for i in range(1, number_of_movies + 1):
-            movie_data.append(
-                f"https://aniworld.to/anime/stream/{anime_slug}/filme/film-{i}")
-
-        season_data.extend(movie_data)
-
-    return season_data
+    """
+    Sammelt alle Episode-URLs für alle Staffeln und Filme eines Animes.
+    
+    Args:
+        anime_slug: Der Anime-Slug
+        
+    Returns:
+        Liste aller Episode-URLs oder leere Liste bei Fehler
+    """
+    try:
+        base_url_template = "https://aniworld.to/anime/stream/{anime}/"
+        base_url = base_url_template.format(anime=anime_slug)
+    
+        logging.debug(f"Hole Daten für {base_url}")
+        main_html = fetch_url_content(base_url)
+        
+        # Wenn keine Daten abgerufen werden können, versuche Fallback mit Playwright
+        if main_html is None:
+            logging.warning(f"Konnte keine Daten für {base_url} abrufen, versuche Fallback")
+            # Fallback: Forciere Playwright als Zweiten Versuch
+            os.environ["USE_PLAYWRIGHT"] = "True"
+            main_html = fetch_url_content(base_url, check=True)
+            os.environ.pop("USE_PLAYWRIGHT", None)  # Zurücksetzen
+            
+            # Wenn immer noch keine Daten, gib leere Liste zurück anstatt Programm zu beenden
+            if not main_html:
+                logging.error(f"Konnte keine Daten für {anime_slug} abrufen, auch nicht mit Playwright")
+                return []
+    
+        soup = BeautifulSoup(main_html, 'html.parser')
+        season_meta = soup.find('meta', itemprop='numberOfSeasons')
+        number_of_seasons = int(season_meta['content']) if season_meta else 0
+    
+        movies = False
+        if soup.find('a', title='Alle Filme'):
+            number_of_seasons -= 1
+            movies = True
+    
+        # Sammeln der Staffel-Daten mit Fehlerbehandlung
+        season_data = []
+        for i in range(1, number_of_seasons + 1):
+            season_url = f"{base_url}staffel-{i}"
+            try:
+                episodes = get_season_episodes(season_url)
+                if episodes:
+                    season_data.extend(episodes)
+                    logging.debug(f"Staffel {i}: {len(episodes)} Episoden hinzugefügt")
+                else:
+                    logging.warning(f"Keine Episoden gefunden für Staffel {i}")
+            except Exception as season_error:
+                logging.error(f"Fehler beim Abrufen der Daten für Staffel {i}: {season_error}")
+    
+        # Sammeln der Film-Daten mit Fehlerbehandlung
+        if movies:
+            movie_data = []
+            try:
+                number_of_movies = get_movies_episode_count(anime_slug)
+                if number_of_movies > 0:
+                    for i in range(1, number_of_movies + 1):
+                        movie_data.append(
+                            f"https://aniworld.to/anime/stream/{anime_slug}/filme/film-{i}")
+                    season_data.extend(movie_data)
+                    logging.debug(f"Filme: {len(movie_data)} Filme hinzugefügt")
+                else:
+                    logging.warning(f"Keine Filme gefunden, obwohl Filme-Sektion vorhanden")
+            except Exception as movie_error:
+                logging.error(f"Fehler beim Abrufen der Filmdaten: {movie_error}")
+    
+        logging.debug(f"Insgesamt {len(season_data)} URLs für {anime_slug} gefunden")
+        return season_data
+    
+    except Exception as e:
+        logging.error(f"Fehler beim Sammeln der Daten für {anime_slug}: {e}")
+        return []
 
 
 def set_terminal_size(columns: int = None, lines: int = None):
