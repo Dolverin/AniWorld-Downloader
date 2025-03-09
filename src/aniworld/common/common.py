@@ -171,18 +171,18 @@ def fetch_url_content_without_playwright(
 
         if "Deine Anfrage wurde als Spam erkannt." in response.text:
             logging.critical(
-                "Your IP address is blacklisted. Please use a VPN, complete the captcha "
-                "by opening the browser link, or try again later.")
+                "Ihre IP-Adresse wurde blockiert. Bitte verwenden Sie ein VPN, lösen Sie das Captcha "
+                "indem Sie die Browserseite öffnen, oder versuchen Sie es später erneut.")
 
         return response.content
 
     except requests.exceptions.Timeout as timeout_error:
-        logging.critical("Request to %s timed out: %s", url, timeout_error)
+        logging.critical("Anfrage an %s hat das Zeitlimit überschritten: %s", url, timeout_error)
         return fetch_url_content_with_playwright(url, proxy, check)
 
     except requests.exceptions.RequestException as request_error:
         if check:
-            logging.critical("Request to %s failed: %s", url, request_error)
+            logging.critical("Anfrage an %s fehlgeschlagen: %s", url, request_error)
         return fetch_url_content_with_playwright(url, proxy, check)
 
 
