@@ -410,7 +410,12 @@ def handle_download_action(params: Dict[str, Any]) -> None:
     # Download-Startzeit
     download_start_time = time.time()
     
-    download_path = os.path.expanduser(DEFAULT_DOWNLOAD_PATH)
+    # Keine Pfadexpansion für absolute Pfade nötig
+    download_path = DEFAULT_DOWNLOAD_PATH
+    # Wenn es sich um einen relativen Pfad oder einen Pfad mit ~ handelt, dann expandieren
+    if DEFAULT_DOWNLOAD_PATH.startswith('~'):
+        download_path = os.path.expanduser(DEFAULT_DOWNLOAD_PATH)
+    
     direct_link = params['direct_link']
     logging.debug("Direct link: %s", direct_link)
 
