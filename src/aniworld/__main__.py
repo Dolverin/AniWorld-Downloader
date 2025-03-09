@@ -467,7 +467,7 @@ class EpisodeForm(npyscreen.ActionForm):
                 'provider_selected': provider_selected,
                 'action_selected': action_selected[0],
                 'aniskip_selected': aniskip_selected,
-                'lang': lang,
+                'language': lang,
                 'output_directory': output_directory,
                 'anime_title': format_anime_title(self.parentApp.anime_slug),
                 'anime_slug': self.parentApp.anime_slug,
