@@ -137,10 +137,25 @@ def build_yt_dlp_command(link: str, output_file: str, selected_provider: str) ->
                     logging.info(f"yt-dlp verwendet Tor-Proxy: {socks_proxy}")
                     command.append("--proxy")
                     command.append(f"socks5://{socks_proxy}")
-        except ImportError:
-            logging.error("Tor-Unterstützung ist nicht verfügbar. Stelle sicher, dass die PySocks und stem Module installiert sind.")
+        except ImportError as e:
+            logging.error(f"Tor-Unterstützung ist nicht verfügbar. Bitte installieren Sie die erforderlichen Module (stem, PySocks). Fehlerdetails: {str(e)}")
+            # Erweiterte Debugging-Informationen
+            import sys
+            logging.debug(f"Python-Pfad: {sys.path}")
+            try:
+                import stem
+                logging.debug("stem-Modul ist verfügbar")
+            except ImportError:
+                logging.debug("stem-Modul fehlt")
+            try:
+                import socks
+                logging.debug("PySocks-Modul ist verfügbar")
+            except ImportError:
+                logging.debug("PySocks-Modul fehlt")
         except Exception as e:
             logging.error(f"Fehler beim Einrichten des Tor-Proxys für yt-dlp: {str(e)}")
+            import traceback
+            logging.debug(f"Fehler-Traceback: {traceback.format_exc()}")
 
     logging.debug("Built yt-dlp command: %s", command)
     return command
