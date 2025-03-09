@@ -528,8 +528,15 @@ def handle_download_action(params: Dict[str, Any]) -> None:
             status=download_status
         )
         logging.debug(f"Download-Statistik erfasst: Status={download_status}, Dauer={download_duration:.2f}s, Größe={file_size or 'unbekannt'}")
+
+        # Aktualisiere die Datenbank-Indizierung für das Anime-Verzeichnis
+        if download_status == "completed" and os.path.exists(file_path):
+            anime_dir = os.path.dirname(file_path)
+            logging.info(f"Aktualisiere Datenbank-Index für neu heruntergeladene Episode in: {anime_dir}")
+            db.scan_directory(anime_dir, force_rescan=True)
+            logging.info("Datenbank-Index aktualisiert")
     except Exception as e:
-        logging.error(f"Fehler beim Speichern der Download-Statistik: {e}")
+        logging.error(f"Fehler beim Speichern der Download-Statistik oder beim Aktualisieren des Index: {e}")
     
     logging.debug("yt-dlp has finished.\nBye bye!")
     if not platform.system() == "Windows":
