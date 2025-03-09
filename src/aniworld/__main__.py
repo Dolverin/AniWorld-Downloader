@@ -524,11 +524,15 @@ class EpisodeForm(npyscreen.ActionForm):
 
             # Führe die Verarbeitung in einem separaten Thread aus, um das UI nicht zu blockieren
             threading.Thread(target=self.__execute_and_exit, args=(params,), daemon=True).start()
-            return  # Nach dem Start des Threads sofort zurückkehren
+        # 'return' wurde entfernt, damit alle Episoden in der Schleife verarbeitet werden
 
     def __execute_and_exit(self, params):
         try:
             execute_with_params(params)
+            # Fügen Sie eine Status-Aktualisierung hinzu
+            episode_title = params.get('anime_title', '') + ' - ' + os.path.basename(params.get('episode_url', ''))
+            self.status_text.value = f"Download abgeschlossen: {episode_title}"
+            self.display()
         except Exception as e:
             logging.exception(f"Fehler beim Ausführen der Episode: {e}")
             # Zeige Fehler im TUI an
@@ -538,9 +542,11 @@ class EpisodeForm(npyscreen.ActionForm):
                 form_color="DANGER",
                 wrap=True
             )
-        finally:
-            # Schließe das Formular nach der Ausführung (egal ob erfolgreicher oder fehlerhafter Ausführung)
-            self.parentApp.switchForm(None)
+            # Status aktualisieren
+            self.status_text.value = f"Fehler: {str(e)}"
+            self.display()
+        # Die 'finally' Klausel mit self.parentApp.switchForm(None) wurde entfernt,
+        # damit die Anwendung nach dem Download nicht beendet wird
 
     def get_language_code(self, language):
         logging.debug("Getting language code for: %s", language)
