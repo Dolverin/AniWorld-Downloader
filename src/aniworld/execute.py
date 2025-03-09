@@ -122,6 +122,25 @@ def build_yt_dlp_command(link: str, output_file: str, selected_provider: str) ->
     elif selected_provider == "Vidmoly":
         command.append("--add-header")
         command.append(f"Referer: {vidmoly_referer}")
+    
+    # Tor-Proxy hinzufügen, wenn USE_TOR aktiviert ist
+    if USE_TOR:
+        try:
+            from aniworld.common.tor_client import get_tor_client
+            
+            tor_client = get_tor_client(use_tor=True)
+            if tor_client and tor_client.is_running:
+                proxy_dict = tor_client.get_proxy_dict()
+                socks_proxy = proxy_dict.get('http', '').replace('http://', '')
+                
+                if socks_proxy:
+                    logging.info(f"yt-dlp verwendet Tor-Proxy: {socks_proxy}")
+                    command.append("--proxy")
+                    command.append(f"socks5://{socks_proxy}")
+        except ImportError:
+            logging.error("Tor-Unterstützung ist nicht verfügbar. Stelle sicher, dass die PySocks und stem Module installiert sind.")
+        except Exception as e:
+            logging.error(f"Fehler beim Einrichten des Tor-Proxys für yt-dlp: {str(e)}")
 
     logging.debug("Built yt-dlp command: %s", command)
     return command
