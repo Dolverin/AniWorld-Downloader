@@ -48,10 +48,10 @@ from aniworld.common import (
     get_description,
     get_description_with_id,
     check_if_episode_exists,
-    get_tor_version,
     get_language_string,
     fetch_url_content
 )
+from aniworld.common import get_tor_version
 from aniworld.extractors import (
     nhentai,
     streamkiste,
