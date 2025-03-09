@@ -1,12 +1,13 @@
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
 import logging
 import re
 from base64 import b64decode
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from aniworld import globals as aniworld_globals
 
-REDIRECT_PATTERN = re.compile(r"window\.location\.href\s*=\s*'(https://[^/]+/e/\w+)';")
+REDIRECT_PATTERN = re.compile(
+    r"window\.location\.href\s*=\s*'(https://[^/]+/e/\w+)';")
 EXTRACT_VEO_HLS_PATTERN = re.compile(r"'hls': '(?P<hls>.*)'")
 
 

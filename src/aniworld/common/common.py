@@ -15,14 +15,14 @@ import sys
 import tempfile
 import time
 import zipfile
-from importlib.metadata import version, PackageNotFoundError
+from importlib.metadata import PackageNotFoundError, version
 from typing import List, Optional
 
-import requests
 import py7zr
+import requests
 from bs4 import BeautifulSoup
-from requests.exceptions import HTTPError
 from packaging.version import Version
+from requests.exceptions import HTTPError
 
 import aniworld.globals as aniworld_globals
 
@@ -40,7 +40,8 @@ def check_dependencies(dependencies: list) -> None:
             resolved_dependencies.append(dep)
 
     logging.debug("Checking for %s in path.", resolved_dependencies)
-    missing = [dep for dep in resolved_dependencies if shutil.which(dep) is None]
+    missing = [
+        dep for dep in resolved_dependencies if shutil.which(dep) is None]
 
     # TODO: Check if in appdata and return
 
@@ -53,8 +54,11 @@ def check_dependencies(dependencies: list) -> None:
         }
 
         if platform.system() == "Windows" or platform.system() == "Linux":
-            logging.debug("Missing dependencies: %s. Attempting to download.", missing)
-            missing = [dep.replace("SyncplayConsole", "syncplay") for dep in missing]
+            logging.debug(
+                "Missing dependencies: %s. Attempting to download.",
+                missing)
+            missing = [dep.replace("SyncplayConsole", "syncplay")
+                       for dep in missing]
             download_dependencies(missing)
         else:
             missing_with_links = [
@@ -63,12 +67,14 @@ def check_dependencies(dependencies: list) -> None:
             ]
             logging.critical(
                 "Missing dependencies: %s in path. Please install them manually.",
-                ', '.join(missing_with_links)
-            )
+                ', '.join(missing_with_links))
             sys.exit(1)
 
 
-def fetch_url_content(url: str, proxy: Optional[str] = None, check: bool = True) -> Optional[bytes]:
+def fetch_url_content(
+        url: str,
+        proxy: Optional[str] = None,
+        check: bool = True) -> Optional[bytes]:
     if aniworld_globals.DEFAULT_USE_PLAYWRIGHT or os.getenv("USE_PLAYWRIGHT"):
         logging.debug("Now fetching without playwright: %s", url)
         return fetch_url_content_with_playwright(url, proxy, check)
@@ -85,39 +91,40 @@ def fetch_url_content_without_playwright(
     }
 
     logging.debug("Using headers: %s", headers)
-    
+
     # Tor verwenden, wenn aktiviert
     if aniworld_globals.USE_TOR:
         try:
             from aniworld.common.tor_client import get_tor_client
-            
+
             logging.debug("Verwende Tor für Anfrage: %s", url)
             tor_client = get_tor_client(use_tor=True)
-            
+
             response, success = tor_client.make_request(
-                url, 
+                url,
                 method="GET",
-                headers=headers, 
+                headers=headers,
                 auto_retry=aniworld_globals.TOR_AUTO_RETRY,
                 max_retries=aniworld_globals.TOR_MAX_RETRIES,
                 timeout=300
             )
-            
+
             if success and response:
                 if "Deine Anfrage wurde als Spam erkannt." in response.text:
                     logging.critical(
                         "Deine IP-Adresse wurde blockiert, obwohl Tor verwendet wurde. "
-                        "Versuche es später erneut oder erhöhe TOR_MAX_RETRIES."
-                    )
+                        "Versuche es später erneut oder erhöhe TOR_MAX_RETRIES.")
                 return response.content
             else:
-                logging.warning("Tor-Anfrage fehlgeschlagen, verwende alternative Methode")
+                logging.warning(
+                    "Tor-Anfrage fehlgeschlagen, verwende alternative Methode")
                 # Wenn Tor fehlschlägt, versuche es mit normaler Anfrage
         except ImportError:
-            logging.error("Tor-Unterstützung ist nicht verfügbar. Stelle sicher, dass die PySocks und stem Module installiert sind.")
+            logging.error(
+                "Tor-Unterstützung ist nicht verfügbar. Stelle sicher, dass die PySocks und stem Module installiert sind.")
         except Exception as e:
             logging.error("Fehler bei Tor-Anfrage: %s", str(e))
-    
+
     # Normaler Proxy-Modus, wenn Tor nicht aktiviert oder fehlgeschlagen ist
     proxies = {}
     if proxy:
@@ -144,14 +151,17 @@ def fetch_url_content_without_playwright(
         }
 
     try:
-        response = requests.get(url, headers=headers, proxies=proxies, timeout=300)
+        response = requests.get(
+            url,
+            headers=headers,
+            proxies=proxies,
+            timeout=300)
         response.raise_for_status()
 
         if "Deine Anfrage wurde als Spam erkannt." in response.text:
             logging.critical(
                 "Your IP address is blacklisted. Please use a VPN, complete the captcha "
-                "by opening the browser link, or try again later."
-            )
+                "by opening the browser link, or try again later.")
 
         return response.content
 
@@ -175,7 +185,8 @@ def fetch_url_content_with_playwright(
     headers = {'User-Agent': aniworld_globals.DEFAULT_USER_AGENT}
 
     install_and_import("playwright")
-    from playwright.sync_api import sync_playwright  # pylint: disable=import-error, import-outside-toplevel
+    from playwright.sync_api import \
+        sync_playwright  # pylint: disable=import-error, import-outside-toplevel
 
     with sync_playwright() as p:
         options = {'proxy': {'server': proxy}} if proxy else {}
@@ -203,12 +214,14 @@ def fetch_url_content_with_playwright(
                     ).count() == 0:
                         logging.debug("Captcha solved.")
                         break
-                    logging.debug("Captcha still present, retry %s/120", attempt + 1)
+                    logging.debug(
+                        "Captcha still present, retry %s/120", attempt + 1)
 
                 if page.locator(
                     "h1#ddg-l10n-title:has-text('Checking your browser before accessing')"
                 ).count() > 0:
-                    raise TimeoutError("Captcha not solved within the time limit.")
+                    raise TimeoutError(
+                        "Captcha not solved within the time limit.")
 
             if response.status != 200:
                 raise HTTPError(f"Failed to fetch page: {response.status}")
@@ -251,22 +264,31 @@ def clean_up_leftovers(directory: str) -> None:
                 os.remove(file_path)
                 logging.debug("Removed leftover file: %s", file_path)
             except PermissionError:
-                logging.warning("Permission denied when trying to remove file: %s", file_path)
+                logging.warning(
+                    "Permission denied when trying to remove file: %s",
+                    file_path)
             except OSError as e:
-                logging.warning("OS error occurred while removing file %s: %s", file_path, e)
+                logging.warning(
+                    "OS error occurred while removing file %s: %s", file_path, e)
 
     if os.path.exists(directory) and not os.listdir(directory):
         try:
             os.rmdir(directory)
             logging.debug("Removed empty directory: %s", directory)
         except PermissionError:
-            logging.warning("Permission denied when trying to remove directory: %s", directory)
+            logging.warning(
+                "Permission denied when trying to remove directory: %s",
+                directory)
         except OSError as e:
-            logging.warning("OS error occurred while removing directory %s: %s", directory, e)
+            logging.warning(
+                "OS error occurred while removing directory %s: %s",
+                directory,
+                e)
 
 
 def setup_aniskip() -> None:
-    script_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script_directory = os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))
     if os.name == 'nt':
         mpv_scripts_directory = os.path.join(
             os.environ.get('APPDATA', ''), 'mpv', 'scripts'
@@ -291,7 +313,8 @@ def setup_aniskip() -> None:
             logging.debug("Content differs, overwriting skip.lua")
             shutil.copy(skip_source_path, skip_destination_path)
         else:
-            logging.debug("skip.lua already exists and is identical, no overwrite needed")
+            logging.debug(
+                "skip.lua already exists and is identical, no overwrite needed")
     else:
         logging.debug("Copying skip.lua to %s", mpv_scripts_directory)
         shutil.copy(skip_source_path, skip_destination_path)
@@ -299,7 +322,8 @@ def setup_aniskip() -> None:
 
 def setup_autostart() -> None:
     logging.debug("Copying autostart.lua to mpv script directory")
-    script_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script_directory = os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))
     if os.name == 'nt':
         mpv_scripts_directory = os.path.join(
             os.environ.get('APPDATA', ''), 'mpv', 'scripts'
@@ -310,8 +334,10 @@ def setup_autostart() -> None:
     if not os.path.exists(mpv_scripts_directory):
         os.makedirs(mpv_scripts_directory)
 
-    autostart_source_path = os.path.join(script_directory, 'aniskip', 'autostart.lua')
-    autostart_destination_path = os.path.join(mpv_scripts_directory, 'autostart.lua')
+    autostart_source_path = os.path.join(
+        script_directory, 'aniskip', 'autostart.lua')
+    autostart_destination_path = os.path.join(
+        mpv_scripts_directory, 'autostart.lua')
 
     if not os.path.exists(autostart_destination_path):
         logging.debug("Copying autostart.lua to %s", mpv_scripts_directory)
@@ -320,7 +346,8 @@ def setup_autostart() -> None:
 
 def setup_autoexit() -> None:
     logging.debug("Copying autoexit.lua to mpv script directory")
-    script_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script_directory = os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))
     if os.name == 'nt':
         mpv_scripts_directory = os.path.join(
             os.environ.get('APPDATA', ''), 'mpv', 'scripts'
@@ -331,15 +358,19 @@ def setup_autoexit() -> None:
     if not os.path.exists(mpv_scripts_directory):
         os.makedirs(mpv_scripts_directory)
 
-    autoexit_source_path = os.path.join(script_directory, 'aniskip', 'autoexit.lua')
-    autoexit_destination_path = os.path.join(mpv_scripts_directory, 'autoexit.lua')
+    autoexit_source_path = os.path.join(
+        script_directory, 'aniskip', 'autoexit.lua')
+    autoexit_destination_path = os.path.join(
+        mpv_scripts_directory, 'autoexit.lua')
 
     if not os.path.exists(autoexit_destination_path):
         logging.debug("Copying autoexit.lua to %s", mpv_scripts_directory)
         shutil.copy(autoexit_source_path, autoexit_destination_path)
 
 
-def get_updated_command_for_mpv(command: List[str], appdata_path: str) -> List[str]:
+def get_updated_command_for_mpv(
+        command: List[str],
+        appdata_path: str) -> List[str]:
     command_name = command[0]
     potential_path = os.path.join(appdata_path, command_name)
     if os.path.exists(potential_path):
@@ -348,14 +379,19 @@ def get_updated_command_for_mpv(command: List[str], appdata_path: str) -> List[s
     return command
 
 
-def get_updated_command_for_syncplayconsole(command: List[str], appdata_path: str) -> List[str]:
+def get_updated_command_for_syncplayconsole(
+        command: List[str],
+        appdata_path: str) -> List[str]:
     command_name = command[0]
     potential_path = os.path.join(appdata_path, command_name)
     if os.path.exists(potential_path):
         command[0] = os.path.join(potential_path, "SyncplayConsole.exe")
         logging.debug("Updated command for SyncplayConsole: %s", command)
     else:
-        command[0] = os.path.join(appdata_path, "syncplay", "SyncplayConsole.exe")
+        command[0] = os.path.join(
+            appdata_path,
+            "syncplay",
+            "SyncplayConsole.exe")
         logging.debug("Updated command for SyncplayConsole: %s", command)
 
     for i, arg in enumerate(command):
@@ -366,7 +402,9 @@ def get_updated_command_for_syncplayconsole(command: List[str], appdata_path: st
     return command
 
 
-def get_updated_command_for_yt_dlp(command: List[str], appdata_path: str) -> List[str]:
+def get_updated_command_for_yt_dlp(
+        command: List[str],
+        appdata_path: str) -> List[str]:
     command_name = command[0]
     potential_path = os.path.join(appdata_path, command_name)
     if os.path.exists(potential_path):
@@ -388,7 +426,8 @@ def execute_command(command: List[str], only_command: bool) -> None:
             if command_name == "mpv":
                 command = get_updated_command_for_mpv(command, appdata_path)
             elif command_name == "SyncplayConsole":
-                command = get_updated_command_for_syncplayconsole(command, appdata_path)
+                command = get_updated_command_for_syncplayconsole(
+                    command, appdata_path)
             elif command_name == "yt-dlp":
                 command = get_updated_command_for_yt_dlp(command, appdata_path)
 
@@ -507,7 +546,8 @@ def get_season_data(anime_slug: str):
         movie_data = []
         number_of_movies = get_movies_episode_count(anime_slug)
         for i in range(1, number_of_movies + 1):
-            movie_data.append(f"https://aniworld.to/anime/stream/{anime_slug}/filme/film-{i}")
+            movie_data.append(
+                f"https://aniworld.to/anime/stream/{anime_slug}/filme/film-{i}")
 
         season_data.extend(movie_data)
 
@@ -515,7 +555,10 @@ def get_season_data(anime_slug: str):
 
 
 def set_terminal_size(columns: int = None, lines: int = None):
-    logging.debug("Setting terminal size to %s columns and %s lines.", columns, lines)
+    logging.debug(
+        "Setting terminal size to %s columns and %s lines.",
+        columns,
+        lines)
     system_name = platform.system()
 
     if not columns or not lines:
@@ -528,7 +571,9 @@ def set_terminal_size(columns: int = None, lines: int = None):
 
 
 def get_season_and_episode_numbers(episode_url: str) -> tuple:
-    logging.debug("Extracting season and episode numbers from URL: %s", episode_url)
+    logging.debug(
+        "Extracting season and episode numbers from URL: %s",
+        episode_url)
     if "staffel" in episode_url and "episode" in episode_url:
         matches = re.findall(r'\d+', episode_url)
         season_episode = int(matches[-2]), int(matches[-1])
@@ -572,7 +617,10 @@ def get_latest_github_version():
     except json.JSONDecodeError as e:
         logging.error("Error decoding JSON response from %s: %s", repo, e)
     except requests.exceptions.RequestException as e:
-        logging.error("Unexpected error fetching latest release from %s: %s", repo, e)
+        logging.error(
+            "Unexpected error fetching latest release from %s: %s",
+            repo,
+            e)
     return ""
 
 
@@ -587,7 +635,10 @@ def is_version_outdated():
     current_version = Version(current_version.strip().lstrip('v').lstrip('.'))
     latest_version = Version(latest_version.strip().lstrip('v').lstrip('.'))
 
-    logging.debug("Current version: %s, Latest version: %s", current_version, latest_version)
+    logging.debug(
+        "Current version: %s, Latest version: %s",
+        current_version,
+        latest_version)
 
     return current_version < latest_version
 
@@ -627,7 +678,10 @@ def get_github_release(repo: str) -> dict:
     except json.JSONDecodeError as e:
         logging.error("Error decoding JSON response from %s: %s", repo, e)
     except requests.exceptions.RequestException as e:
-        logging.error("Unexpected error fetching latest release from %s: %s", repo, e)
+        logging.error(
+            "Unexpected error fetching latest release from %s: %s",
+            repo,
+            e)
     return {}
 
 
@@ -645,7 +699,8 @@ def download_dependencies(dependencies: list):
 
     dependencies = [dep for dep in dependencies if not shutil.which(dep)]
     if not dependencies:
-        logging.debug("All required dependencies are already in PATH. No downloads needed.")
+        logging.debug(
+            "All required dependencies are already in PATH. No downloads needed.")
         return
 
     appdata_path = os.path.join(os.getenv('APPDATA'), 'aniworld')
@@ -665,7 +720,10 @@ def download_dependencies(dependencies: list):
     logging.debug("Windows dependencies downloaded.")
 
 
-def download_and_extract_dependency(dep: str, dep_path: str, appdata_path: str):
+def download_and_extract_dependency(
+        dep: str,
+        dep_path: str,
+        appdata_path: str):
     if dep == 'mpv':
         if platform.system() == "Windows":
             logging.debug("Downloading mpv...")
@@ -699,7 +757,8 @@ def download_mpv(dep_path: str, appdata_path: str):
         else:
             logging.debug("AVX2 is not supported.")
     except Exception:  # pylint: disable=broad-exception-caught  # TODO explicitly specify
-        logging.debug("Exception while checking for avx2, defaulting support to False.")
+        logging.debug(
+            "Exception while checking for avx2, defaulting support to False.")
         avx2_supported = False
     pattern = r'mpv-x86_64-\d{8}-git-[a-f0-9]{7}\.7z'
     if avx2_supported:
@@ -719,7 +778,8 @@ def download_mpv(dep_path: str, appdata_path: str):
     logging.debug("Direct link: %s", direct_link)
 
     if not direct_link:
-        logging.error("No download link found for MPV. Please download it manually.")
+        logging.error(
+            "No download link found for MPV. Please download it manually.")
         return
     logging.debug(direct_link)
 
@@ -748,7 +808,8 @@ def download_syncplay(dep_path: str):
         None
     )
     if not direct_link:
-        logging.error("No download link found for Syncplay. Please install it manually.")
+        logging.error(
+            "No download link found for Syncplay. Please install it manually.")
         return
     logging.debug(direct_link)
 
@@ -796,7 +857,8 @@ def is_tail_running():
 
 def check_avx2_support() -> bool:
     if platform.system() != "Windows":
-        logging.debug("AVX2 check is only supported on Windows, defaulting to False.")
+        logging.debug(
+            "AVX2 check is only supported on Windows, defaulting to False.")
         return False
 
     try:
@@ -807,18 +869,25 @@ def check_avx2_support() -> bool:
                  'Caption, Architecture, DataWidth, Manufacturer, ProcessorType, Status'],
                 capture_output=True, text=True, check=False
             )
-            logging.debug("CPU Info: %s", cpu_info.stdout.decode('utf-8', errors='replace'))
-            if 'avx2' in cpu_info.stdout.decode('utf-8', errors='replace').lower():
+            logging.debug(
+                "CPU Info: %s",
+                cpu_info.stdout.decode(
+                    'utf-8',
+                    errors='replace'))
+            if 'avx2' in cpu_info.stdout.decode(
+                    'utf-8', errors='replace').lower():
                 logging.debug("AVX2 is supported.")
                 return True
         else:
             logging.debug("wmic is not in path, defaulting to False.")
         return False
     except subprocess.CalledProcessError as e:
-        logging.error("Error checking AVX2 support, defaulting to False.: %s", e)
+        logging.error(
+            "Error checking AVX2 support, defaulting to False.: %s", e)
         return False
     except subprocess.SubprocessError as e:
-        logging.error("Subprocess error checking AVX2 support, defaulting to False.: %s", e)
+        logging.error(
+            "Subprocess error checking AVX2 support, defaulting to False.: %s", e)
         return False
 
 
@@ -862,7 +931,9 @@ def download_anime4k(mode: str):
     logging.debug("Downloading Anime4k from %s", download_link)
 
     anime4k_path = get_aniworld_data_directory()
-    shaders_path = os.path.join(anime4k_path, f"GLSL_{platform.system()}_{mode}-end")
+    shaders_path = os.path.join(
+        anime4k_path, f"GLSL_{
+            platform.system()}_{mode}-end")
     archive_path = os.path.join(shaders_path, "anime4k.zip")
 
     os.makedirs(shaders_path, exist_ok=True)
@@ -898,7 +969,9 @@ def remove_anime4k_files():
 
 def set_anime4k_config(mode: str):
     anime4k_path = get_aniworld_data_directory()
-    shaders_path = os.path.join(anime4k_path, f"GLSL_{platform.system()}_{mode}-end")
+    shaders_path = os.path.join(
+        anime4k_path, f"GLSL_{
+            platform.system()}_{mode}-end")
     mpv_directory = get_mpv_directory()
 
     os.makedirs(mpv_directory, exist_ok=True)
@@ -998,8 +1071,11 @@ def check_package_installation(package_name: str = "aniworld"):
     if git_path.exists():
         return "clone"
 
-    dist_info_path = pathlib.Path(site_packages) / f"{package_name}-*.dist-info"
-    dist_info_dirs = list(dist_info_path.parent.glob(f"{package_name}-*.dist-info"))
+    dist_info_path = pathlib.Path(
+        site_packages) / f"{package_name}-*.dist-info"
+    dist_info_dirs = list(
+        dist_info_path.parent.glob(
+            f"{package_name}-*.dist-info"))
 
     if dist_info_dirs:
         direct_url_file = dist_info_dirs[0] / "direct_url.json"
@@ -1089,7 +1165,10 @@ def get_component_paths():
 def update_component(component: str):
     paths = get_component_paths()
 
-    components = ["mpv", "yt-dlp", "syncplay"] if component == "all" else [component]
+    components = [
+        "mpv",
+        "yt-dlp",
+        "syncplay"] if component == "all" else [component]
 
     for comp in components:
         remove_path(paths[comp])
@@ -1110,7 +1189,8 @@ def get_anime_season_title(slug: str, season: int) -> str:
     # this will also be called for each season but for now once
     logging.debug("Fetching %s season %s name", slug, season)
 
-    season_html = fetch_url_content(f"https://aniworld.to/anime/stream/{slug}/staffel-{season}")
+    season_html = fetch_url_content(
+        f"https://aniworld.to/anime/stream/{slug}/staffel-{season}")
 
     if not season_html:
         logging.error("Failed to fetch content for %s season %s", slug, season)
@@ -1123,7 +1203,10 @@ def get_anime_season_title(slug: str, season: int) -> str:
     if series_div:
         name = series_div.find('h1').find('span').text
     else:
-        logging.warning("No series title found for %s season %s, using slug instead", slug, season)
+        logging.warning(
+            "No series title found for %s season %s, using slug instead",
+            slug,
+            season)
         name = slug.replace("-", " ").title()
 
     logging.debug("Anime season title: %s", name)
@@ -1193,7 +1276,7 @@ def install_packages(package_manager, packages):
     # Prüfe, ob wir in einer SSH-Sitzung sind
     is_ssh = os.environ.get('SSH_CLIENT') or os.environ.get('SSH_TTY')
     has_pkexec = shutil.which('pkexec') is not None
-    
+
     # Für yt-dlp versuchen wir zuerst die Installation über pip
     if packages == ['yt-dlp']:
         try:
@@ -1204,14 +1287,17 @@ def install_packages(package_manager, packages):
             )
             return
         except subprocess.SubprocessError as e:
-            logging.error("Fehler beim Installieren von yt-dlp über pip: %s", e)
-    
+            logging.error(
+                "Fehler beim Installieren von yt-dlp über pip: %s", e)
+
     # Wenn wir in einer SSH-Sitzung sind oder pkexec nicht verfügbar ist,
     # geben wir nur Anweisungen für manuelle Installation aus
     if is_ssh or not has_pkexec:
-        print(f"Du benötigst administrative Rechte, um {', '.join(packages)} zu installieren.")
+        print(
+            f"Du benötigst administrative Rechte, um {
+                ', '.join(packages)} zu installieren.")
         print(f"Bitte führe folgenden Befehl manuell aus:")
-        
+
         if package_manager == 'pacman':
             print(f"sudo pacman -S --noconfirm {' '.join(packages)}")
         elif package_manager == 'apt':
@@ -1229,9 +1315,10 @@ def install_packages(package_manager, packages):
         elif package_manager == 'brew':
             print(f"brew install {' '.join(packages)}")
         else:
-            print(f'Paketmanager "{package_manager}" wird nicht unterstützt oder ist unbekannt.')
+            print(
+                f'Paketmanager "{package_manager}" wird nicht unterstützt oder ist unbekannt.')
         return
-    
+
     # Für Desktop-Systeme mit pkexec
     try:
         if package_manager == 'pacman':
@@ -1278,13 +1365,13 @@ def install_packages(package_manager, packages):
             )
         elif package_manager == 'brew':
             msg = (
-                f'Bitte aktualisiere "{packages[0]}" manuell, da es derzeit auf MacOS '
-                'nicht unterstützt wird!'
-            )
+                f'Bitte aktualisiere "{
+                    packages[0]}" manuell, da es derzeit auf MacOS ' 'nicht unterstützt wird!')
             logging.debug(msg)
             print(msg)
         else:
-            print(f'Paketmanager "{package_manager}" wird nicht unterstützt oder ist unbekannt.')
+            print(
+                f'Paketmanager "{package_manager}" wird nicht unterstützt oder ist unbekannt.')
     except Exception as e:
         logging.error("Fehler beim Installieren der Pakete: %s", str(e))
 
@@ -1298,7 +1385,7 @@ def open_terminal_with_command(command):
         except subprocess.SubprocessError as e:
             logging.error("Error executing command in SSH session: %s", e)
             return
-            
+
     terminal_emulators = [
         ('gnome-terminal', ['gnome-terminal', '--', 'bash', '-c', f'{command}; exec bash']),
         ('xterm', ['xterm', '-hold', '-e', command]),
@@ -1355,7 +1442,9 @@ def get_random_anime(genre: str) -> str:
         random_anime = random.choice(anime_list)
         logging.debug("Selected Anime: %s", random_anime)
     except (IndexError, TypeError):
-        logging.warning("No anime found in the list using this genre: %s.", genre)
+        logging.warning(
+            "No anime found in the list using this genre: %s.",
+            genre)
         return None
 
     name = random_anime['name']
@@ -1401,7 +1490,8 @@ def get_windows_messagebox_response(message, title, box_type):
         "error": 0x10,
     }.get(box_type, 0x40)
 
-    response = ctypes.windll.user32.MessageBoxW(0, message, title, msg_box_type)
+    response = ctypes.windll.user32.MessageBoxW(
+        0, message, title, msg_box_type)
     return response == 6 if box_type == "yesno" else True
 
 
@@ -1548,8 +1638,8 @@ def get_current_wallpaper():
 
 def set_wallpaper_fit(image_path):
     try:
-        import winreg  # pylint: disable=import-error, import-outside-toplevel
         import ctypes  # pylint: disable=import-error, import-outside-toplevel
+        import winreg  # pylint: disable=import-error, import-outside-toplevel
     except ModuleNotFoundError as e:
         raise ImportError(
             "Required modules (winreg, ctypes) not found. "
@@ -1649,7 +1739,9 @@ def set_temp_wallpaper():
 
             if current_wallpaper:
                 set_wallpaper(current_wallpaper)
-                logging.debug("Reverted to original wallpaper: %s", current_wallpaper)
+                logging.debug(
+                    "Reverted to original wallpaper: %s",
+                    current_wallpaper)
         except requests.RequestException as e:
             logging.debug("Failed to download the wallpaper: %s", e)
 
@@ -1662,9 +1754,9 @@ def fetch_anime_id(anime_title, season):
     def fetch_mal_data(keyword):
         response = requests.get(
             f"https://myanimelist.net/search/prefix.json?type=anime&keyword={keyword}",
-            headers={"User-Agent": aniworld_globals.DEFAULT_USER_AGENT},
-            timeout=10
-        )
+            headers={
+                "User-Agent": aniworld_globals.DEFAULT_USER_AGENT},
+            timeout=10)
         return response.json() if response.status_code == 200 else None
 
     def find_best_match(mal_data):
@@ -1745,11 +1837,11 @@ def install_and_import(package):
         while True:
             print(f'The Package "{package}" is not installed!')
             user_input = input(
-                f'Do you want me to run "pip install {package}" for you?  (Y|N) '
-            ).upper()
+                f'Do you want me to run "pip install {package}" for you?  (Y|N) ').upper()
             if user_input == "Y":
                 print(f"{package} is installing...")
-                subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+                subprocess.check_call(
+                    [sys.executable, "-m", "pip", "install", package])
                 break
             if user_input == "N":
                 sys.exit()
@@ -1759,102 +1851,130 @@ def install_and_import(package):
         globals()[package] = __import__(package)
 
 
-def check_if_episode_exists(anime_title, season, episode, language, download_path):
+def check_if_episode_exists(
+        anime_title,
+        season,
+        episode,
+        language,
+        download_path):
     """
     Prüft, ob eine Episode bereits im Download-Verzeichnis existiert.
     Nutzt zunächst den Datenbankindex für eine schnelle Suche, und führt
     nur wenn nötig eine vollständige Dateisystemsuche durch.
-    
+
     Args:
         anime_title (str): Der Titel des Animes
         season (int): Staffelnummer
         episode (int): Episodennummer
         language (str): Sprachversion (German Dub, English Sub, German Sub)
         download_path (str): Der Basis-Downloadpfad
-        
+
     Returns:
         bool: True, wenn die Episode existiert, sonst False
     """
-    logging.info(f"DEBUG-CHECK: Prüfe Existenz von {anime_title} S{season}E{episode} ({language}) in {download_path}")
-    
+    logging.info(
+        f"DEBUG-CHECK: Prüfe Existenz von {anime_title} S{season}E{episode} ({language}) in {download_path}")
+
     try:
-        # Importiere die Datenbankfunktionalität lokal, um zirkuläre Importe zu vermeiden
+        # Importiere die Datenbankfunktionalität lokal, um zirkuläre Importe zu
+        # vermeiden
         from aniworld.common.db import get_db
-        
+
         # Hole eine Instanz der Datenbank
         db = get_db()
-        
-        # Wenn gerade eine Indizierung läuft, stattdessen die Dateisystem-Suche verwenden
+
+        # Wenn gerade eine Indizierung läuft, stattdessen die Dateisystem-Suche
+        # verwenden
         if db.is_currently_indexing():
-            logging.debug("DEBUG-CHECK: Datenbankindizierung läuft, verwende Dateisystemsuche")
-            return _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path)
-        
+            logging.debug(
+                "DEBUG-CHECK: Datenbankindizierung läuft, verwende Dateisystemsuche")
+            return _check_if_episode_exists_filesystem(
+                anime_title, season, episode, language, download_path)
+
         # Überprüfe zunächst, ob wir die Episode in der Datenbank finden können
-        logging.debug(f"DEBUG-CHECK: Suche in Datenbank nach {anime_title} S{season}E{episode}")
+        logging.debug(
+            f"DEBUG-CHECK: Suche in Datenbank nach {anime_title} S{season}E{episode}")
         if db.episode_exists(anime_title, season, episode, language):
-            logging.debug(f"DEBUG-CHECK: Episode {anime_title} S{season}E{episode} ({language}) in Datenbank gefunden")
+            logging.debug(
+                f"DEBUG-CHECK: Episode {anime_title} S{season}E{episode} ({language}) in Datenbank gefunden")
             return True
-            
+
         # Wenn nicht in der Datenbank, aktualisiere den Index für diesen Ordner
-        logging.debug(f"DEBUG-CHECK: Episode nicht im Index gefunden, durchsuche Dateisystem in {download_path}")
-        
+        logging.debug(
+            f"DEBUG-CHECK: Episode nicht im Index gefunden, durchsuche Dateisystem in {download_path}")
+
         # Pfad zum Ordner der Serie
         sanitized_title = sanitize_path(anime_title)
         series_path = os.path.join(download_path, sanitized_title)
-        
+
         # Prüfen, ob Indizierung gerade läuft
         if db.is_currently_indexing():
-            logging.debug("DEBUG-CHECK: Datenbankindizierung läuft bereits, verwende Dateisystemsuche")
-            return _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path)
-        
+            logging.debug(
+                "DEBUG-CHECK: Datenbankindizierung läuft bereits, verwende Dateisystemsuche")
+            return _check_if_episode_exists_filesystem(
+                anime_title, season, episode, language, download_path)
+
         # Indiziere Verzeichnisse (nur wenn nötig)
         new_files = 0
         if os.path.exists(series_path):
             logging.debug(f"DEBUG-CHECK: Indiziere Serienordner {series_path}")
             new_files += db.scan_directory(series_path, force_rescan=False)
-        
-        # Wenn wir keine neuen Dateien im Serienordner gefunden haben, 
+
+        # Wenn wir keine neuen Dateien im Serienordner gefunden haben,
         # überprüfe auch den allgemeinen Download-Ordner
         if new_files == 0:
-            logging.debug(f"DEBUG-CHECK: Keine Dateien im Serienordner gefunden, indiziere auch {download_path}")
+            logging.debug(
+                f"DEBUG-CHECK: Keine Dateien im Serienordner gefunden, indiziere auch {download_path}")
             db.scan_directory(download_path, force_rescan=False)
-        
+
         # Versuche erneut, die Episode zu finden
-        logging.debug(f"DEBUG-CHECK: Wiederhole Datenbanksuche nach Indizierung")
+        logging.debug(
+            f"DEBUG-CHECK: Wiederhole Datenbanksuche nach Indizierung")
         if db.episode_exists(anime_title, season, episode, language):
-            logging.debug(f"DEBUG-CHECK: Episode {anime_title} S{season}E{episode} ({language}) nach Indizierung gefunden")
+            logging.debug(
+                f"DEBUG-CHECK: Episode {anime_title} S{season}E{episode} ({language}) nach Indizierung gefunden")
             return True
-                
-        logging.debug(f"DEBUG-CHECK: Episode {anime_title} S{season}E{episode} ({language}) wurde nicht gefunden")
+
+        logging.debug(
+            f"DEBUG-CHECK: Episode {anime_title} S{season}E{episode} ({language}) wurde nicht gefunden")
         return False
-        
+
     except ImportError as e:
         # Fallback zur alten Methode, wenn die DB nicht verfügbar ist
-        logging.warning(f"DEBUG-CHECK: Datenbankindex nicht verfügbar: {e}, verwende Dateisystemsuche...")
-        return _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path)
+        logging.warning(
+            f"DEBUG-CHECK: Datenbankindex nicht verfügbar: {e}, verwende Dateisystemsuche...")
+        return _check_if_episode_exists_filesystem(
+            anime_title, season, episode, language, download_path)
     except Exception as e:
         # Bei Datenbankproblemen zur alten Methode zurückfallen
-        logging.error(f"DEBUG-CHECK: Fehler bei der Datenbanksuche: {e}, verwende Dateisystemsuche...")
-        return _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path)
+        logging.error(
+            f"DEBUG-CHECK: Fehler bei der Datenbanksuche: {e}, verwende Dateisystemsuche...")
+        return _check_if_episode_exists_filesystem(
+            anime_title, season, episode, language, download_path)
 
 
-def _check_if_episode_exists_filesystem(anime_title, season, episode, language, download_path):
+def _check_if_episode_exists_filesystem(
+        anime_title,
+        season,
+        episode,
+        language,
+        download_path):
     """
     Prüft mit der alten Methode über das Dateisystem, ob eine Episode existiert.
     Wird als Fallback verwendet, wenn die Datenbanksuche nicht funktioniert.
-    
+
     Args:
         anime_title (str): Der Titel des Animes
         season (int): Staffelnummer
         episode (int): Episodennummer
         language (str): Sprachversion (German Dub, English Sub, German Sub)
         download_path (str): Der Basis-Downloadpfad
-        
+
     Returns:
         bool: True, wenn die Episode existiert, sonst False
     """
     sanitized_title = sanitize_path(anime_title)
-    
+
     # Formatierte Staffel- und Episodennummern wie im Download-Code
     season_str = ""
     if season:
@@ -1864,7 +1984,7 @@ def _check_if_episode_exists_filesystem(anime_title, season, episode, language, 
             season_str = "0" + str(season)
         else:
             season_str = str(season)
-    
+
     episode_str = ""
     if episode < 10:
         episode_str = "00" + str(episode)
@@ -1872,68 +1992,94 @@ def _check_if_episode_exists_filesystem(anime_title, season, episode, language, 
         episode_str = "0" + str(episode)
     else:
         episode_str = str(episode)
-    
-    # Erzeuge verschiedene Namensmuster, die mit dem Dateinamen übereinstimmen könnten
+
+    # Erzeuge verschiedene Namensmuster, die mit dem Dateinamen übereinstimmen
+    # könnten
     patterns = []
-    
+
     # Standard-Muster (genau wie im Download-Code)
     if season:
-        patterns.append(f"{sanitized_title} - S{season_str}E{episode_str} \\({language}\\).*")
+        patterns.append(
+            f"{sanitized_title} - S{season_str}E{episode_str} \\({language}\\).*")
     else:
-        patterns.append(f"{sanitized_title} - Movie {episode_str} \\({language}\\).*")
-        
+        patterns.append(
+            f"{sanitized_title} - Movie {episode_str} \\({language}\\).*")
+
     # Alternative Muster mit verschiedenen Formatierungen
     # Muster ohne führende Nullen
     if season:
-        patterns.append(f"{sanitized_title} - S{int(season)}E{int(episode)} \\({language}\\).*")
-    
+        patterns.append(
+            f"{sanitized_title} - S{int(season)}E{int(episode)} \\({language}\\).*")
+
     # Muster mit "Episode" ausgeschrieben
     if season:
-        patterns.append(f"{sanitized_title}.*[Ss]{season_str}.*[Ee]{episode_str}.*{language}.*")
-        patterns.append(f"{sanitized_title}.*[Ss]{int(season)}.*[Ee]{int(episode)}.*{language}.*")
-        patterns.append(f"{sanitized_title}.*[Ss]taffel[ ._-]{season_str}.*[Ee]pisode[ ._-]{episode_str}.*{language}.*")
-        patterns.append(f"{sanitized_title}.*[Ss]taffel[ ._-]{int(season)}.*[Ee]pisode[ ._-]{int(episode)}.*{language}.*")
-        patterns.append(f"{sanitized_title}.*[Ss]eason[ ._-]{season_str}.*[Ee]pisode[ ._-]{episode_str}.*{language}.*")
-        patterns.append(f"{sanitized_title}.*[Ss]eason[ ._-]{int(season)}.*[Ee]pisode[ ._-]{int(episode)}.*{language}.*")
-    
-    # Muster für verschiedene Sprachen (falls die Sprache anders geschrieben wurde)
-    for lang_variant in [language, language.replace(" ", "."), language.replace(" ", "_"), language.replace(" ", "-")]:
+        patterns.append(
+            f"{sanitized_title}.*[Ss]{season_str}.*[Ee]{episode_str}.*{language}.*")
+        patterns.append(
+            f"{sanitized_title}.*[Ss]{int(season)}.*[Ee]{int(episode)}.*{language}.*")
+        patterns.append(
+            f"{sanitized_title}.*[Ss]taffel[ ._-]{season_str}.*[Ee]pisode[ ._-]{episode_str}.*{language}.*")
+        patterns.append(
+            f"{sanitized_title}.*[Ss]taffel[ ._-]{int(season)}.*[Ee]pisode[ ._-]{int(episode)}.*{language}.*")
+        patterns.append(
+            f"{sanitized_title}.*[Ss]eason[ ._-]{season_str}.*[Ee]pisode[ ._-]{episode_str}.*{language}.*")
+        patterns.append(
+            f"{sanitized_title}.*[Ss]eason[ ._-]{int(season)}.*[Ee]pisode[ ._-]{int(episode)}.*{language}.*")
+
+    # Muster für verschiedene Sprachen (falls die Sprache anders geschrieben
+    # wurde)
+    for lang_variant in [
+        language, language.replace(
+            " ", "."), language.replace(
+            " ", "_"), language.replace(
+                " ", "-")]:
         if season:
-            patterns.append(f"{sanitized_title} - S{season_str}E{episode_str} \\({lang_variant}\\).*")
+            patterns.append(
+                f"{sanitized_title} - S{season_str}E{episode_str} \\({lang_variant}\\).*")
         else:
-            patterns.append(f"{sanitized_title} - Movie {episode_str} \\({lang_variant}\\).*")
-    
-    # Einfache Suchmuster, das nur nach Staffel und Episode sucht (für beliebige Dateiformate)
+            patterns.append(
+                f"{sanitized_title} - Movie {episode_str} \\({lang_variant}\\).*")
+
+    # Einfache Suchmuster, das nur nach Staffel und Episode sucht (für
+    # beliebige Dateiformate)
     if season:
         patterns.append(f".*[Ss]{season_str}[Ee]{episode_str}.*")
         patterns.append(f".*[Ss]{int(season)}[Ee]{int(episode)}.*")
     else:
         patterns.append(f".*[Mm]ovie[ ._-]{episode_str}.*")
         patterns.append(f".*[Mm]ovie[ ._-]{int(episode)}.*")
-    
+
     logging.debug(f"Suche nach folgenden Mustern:")
     for pattern in patterns:
         logging.debug(f"  - {pattern}")
-    
+
     # Pfad zum Ordner der Serie
     search_path = os.path.join(download_path, sanitized_title)
-    
+
     # Prüfen, ob der Serienordner existiert
     if not os.path.exists(search_path):
-        logging.debug(f"Ordner {search_path} existiert nicht, durchsuche den allgemeinen Download-Ordner")
+        logging.debug(
+            f"Ordner {search_path} existiert nicht, durchsuche den allgemeinen Download-Ordner")
         search_path = download_path
-    
+
     logging.debug(f"Durchsuche {search_path} und alle Unterordner rekursiv")
-    
+
     # Rekursive Suche im Hauptordner und allen Unterordnern
     for root, dirs, files in os.walk(search_path):
-        logging.debug(f"Durchsuche Verzeichnis: {root} mit {len(files)} Dateien und {len(dirs)} Unterordnern")
+        logging.debug(
+            f"Durchsuche Verzeichnis: {root} mit {
+                len(files)} Dateien und {
+                len(dirs)} Unterordnern")
         for file in files:
             for pattern in patterns:
                 if re.search(pattern, file, re.IGNORECASE):
-                    logging.debug(f"Datei gefunden: {os.path.join(root, file)} mit Muster {pattern}")
+                    logging.debug(
+                        f"Datei gefunden: {
+                            os.path.join(
+                                root,
+                                file)} mit Muster {pattern}")
                     return True
-    
+
     logging.debug(f"Keine passende Datei gefunden")
     return False
 

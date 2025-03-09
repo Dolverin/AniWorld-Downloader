@@ -1,56 +1,31 @@
-from .common import (
-    check_dependencies,
-    clean_up_leftovers,
-    clear_screen,
-    download_dependencies,
-    execute_command,
-    fetch_url_content,
-    ftoi,
-    get_language_code,
-    get_language_string,
-    get_season_data,
-    get_version,
-    is_tail_running,
-    raise_runtime_error,
-    set_terminal_size,
-    setup_aniskip,
-    get_season_and_episode_numbers,
-    setup_anime4k,
-    is_version_outdated,
-    read_episode_file,
-    check_package_installation,
-    self_uninstall,
-    update_component,
-    print_progress_info,
-    get_anime_season_title,
-    countdown,
-    sanitize_path,
-    open_terminal_with_command,
-    setup_autostart,
-    setup_autoexit,
-    get_random_anime,
-    check_internet_connection,
-    show_messagebox,
-    get_season_episode_count,
-    get_description,
-    get_description_with_id,
-    fetch_anime_id,
-    install_and_import,
-    check_if_episode_exists
-)
-
-from .ascii_art import display_ascii_art
-from .adventure import adventure
-
 # Importiere die neue Datenbankfunktionalität
 from aniworld.common.db import get_db
 
+from .adventure import adventure
+from .ascii_art import display_ascii_art
+from .common import (check_dependencies, check_if_episode_exists,
+                     check_internet_connection, check_package_installation,
+                     clean_up_leftovers, clear_screen, countdown,
+                     download_dependencies, execute_command, fetch_anime_id,
+                     fetch_url_content, ftoi, get_anime_season_title,
+                     get_description, get_description_with_id,
+                     get_language_code, get_language_string, get_random_anime,
+                     get_season_and_episode_numbers, get_season_data,
+                     get_season_episode_count, get_version, install_and_import,
+                     is_tail_running, is_version_outdated,
+                     open_terminal_with_command, print_progress_info,
+                     raise_runtime_error, read_episode_file, sanitize_path,
+                     self_uninstall, set_terminal_size, setup_anime4k,
+                     setup_aniskip, setup_autoexit, setup_autostart,
+                     show_messagebox, update_component)
+
 # Import für Tor-Funktionalität
 try:
-    from aniworld.common.tor_client import get_tor_client, TorClient
+    from aniworld.common.tor_client import TorClient, get_tor_client
 except ImportError:
     # Fehlende Tor-Bibliotheken werden bei Bedarf zur Laufzeit gemeldet
     pass
+
 
 def get_tor_version() -> str:
     """Gibt die Tor-Version zurück, wenn Tor verfügbar ist."""
@@ -72,17 +47,18 @@ def get_tor_version() -> str:
     except (FileNotFoundError, subprocess.SubprocessError):
         return "nicht installiert"
 
+
 def is_tor_running() -> bool:
     """Prüft, ob der Tor-Dienst auf dem System läuft."""
     try:
-        import subprocess
         import platform
-        
+        import subprocess
+
         if platform.system() == "Windows":
             cmd = ["tasklist", "/FI", "IMAGENAME eq tor.exe", "/NH"]
         else:  # Linux/Mac
             cmd = ["pgrep", "-x", "tor"]
-            
+
         result = subprocess.run(
             cmd,
             stdout=subprocess.PIPE,
@@ -90,11 +66,11 @@ def is_tor_running() -> bool:
             text=True,
             check=False
         )
-        
+
         # Wenn der Prozess gefunden wurde, ist Tor aktiv
         if result.returncode == 0 and result.stdout.strip():
             return True
-            
+
         return False
     except (FileNotFoundError, subprocess.SubprocessError):
         return False

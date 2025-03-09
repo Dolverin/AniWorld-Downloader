@@ -24,8 +24,8 @@ SOFTWARE.
 
 import os
 import re
-
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import requests
 from bs4 import BeautifulSoup
 
@@ -52,7 +52,8 @@ def create_output_folder(folder_name):
 def download_image(image_url, output_path, i):
     try:
         response = requests.get(image_url, timeout=10)
-        if response.status_code == 200 and response.content.startswith(b'\xff\xd8'):
+        if response.status_code == 200 and response.content.startswith(
+                b'\xff\xd8'):
             image_path = os.path.join(output_path, f'{i}.jpg')
             with open(image_path, 'wb') as image_file:
                 image_file.write(response.content)
@@ -65,9 +66,13 @@ def download_image(image_url, output_path, i):
 def download_images_concurrently(base_url, output_path):
     with ThreadPoolExecutor(os.cpu_count() * 2) as executor:
         futures = {
-            executor.submit(download_image, f"{base_url}/{i}.jpg", output_path, i): i
-            for i in range(1, 1000)
-        }
+            executor.submit(
+                download_image,
+                f"{base_url}/{i}.jpg",
+                output_path,
+                i): i for i in range(
+                1,
+                1000)}
         for future in as_completed(futures):
             result = future.result()
             if result:
@@ -85,7 +90,8 @@ def fetch_image_base_url(gallery_id):
             img_tag = soup.select_one('#image-container a img')
             if img_tag:
                 img_url = img_tag['src']
-                match = re.match(r'https://(\w+)\.nhentai\.net/galleries/(\d+)/\d+\.jpg', img_url)
+                match = re.match(
+                    r'https://(\w+)\.nhentai\.net/galleries/(\d+)/\d+\.jpg', img_url)
                 if match:
                     subdomain, gallery_id = match.groups()
                     return f"https://{subdomain}.nhentai.net/galleries/{gallery_id}"

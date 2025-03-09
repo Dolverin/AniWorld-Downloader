@@ -23,15 +23,16 @@ SOFTWARE.
 """
 
 import os
-import subprocess
-import re
 import platform
-import requests
+import re
+import subprocess
 
+import requests
 from bs4 import BeautifulSoup
-from aniworld.extractors import voe_get_direct_link
+
 from aniworld import globals as aniworld_globals
 from aniworld.common import install_and_import
+from aniworld.extractors import voe_get_direct_link
 
 
 def clear_screen() -> None:
@@ -45,7 +46,8 @@ def fetch_direct_link(link):
     filtered_urls = []
 
     install_and_import("playwright")
-    from playwright.sync_api import sync_playwright  # pylint: disable=import-error, import-outside-toplevel
+    from playwright.sync_api import \
+        sync_playwright  # pylint: disable=import-error, import-outside-toplevel
 
     with sync_playwright() as p:
         # TODO - add firefox or chromium fallback
@@ -56,7 +58,7 @@ def fetch_direct_link(link):
         def request_callback(request):
             if re.match(r"https://voe\.sx/e/.*", request.url):
                 filtered_urls.append(request.url)
-        
+
         # Registriere den Callback für Anfragen
         page.on("request", request_callback)
 
@@ -68,9 +70,12 @@ def fetch_direct_link(link):
         title_element = page.query_selector("div.info-right .title h1")
         title_text = title_element.inner_text().strip() if title_element else "StreamKisteTV"
 
-        page.wait_for_selector("div#single-stream div#stream li.stream div#stream-links a")
-        first_stream_link = page.query_selector("div#single-stream div#"
-                                                "stream li.stream div#""stream-links a")
+        page.wait_for_selector(
+            "div#single-stream div#stream li.stream div#stream-links a")
+        first_stream_link = page.query_selector(
+            "div#single-stream div#"
+            "stream li.stream div#"
+            "stream-links a")
 
         if first_stream_link:
             first_stream_link.click()
@@ -101,7 +106,10 @@ def fetch_direct_link(link):
 
 
 def download_video(link, title):
-    filename = os.path.join(os.path.expanduser('~'), 'Downloads', f"{title}.mp4")
+    filename = os.path.join(
+        os.path.expanduser('~'),
+        'Downloads',
+        f"{title}.mp4")
     subprocess.run(['yt-dlp', '--quiet', '--no-warnings',
                     '--progress', '-o', filename, link], check=False)
 

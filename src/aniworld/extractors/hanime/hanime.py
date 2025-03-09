@@ -1,10 +1,11 @@
-# pylint: disable=missing-module-docstring, missing-class-docstring, missing-function-docstring
+# pylint: disable=missing-module-docstring, missing-class-docstring,
+# missing-function-docstring
 
 import argparse
-import sys
-import time
 import json
 import re
+import sys
+import time
 
 import requests
 
@@ -62,10 +63,8 @@ class Video:
             f"https://hanime.tv/api/v8/video?id={slug}",
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 6.3; WOW64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/47.0.2526.106 Safari/537.36"
-            },
-            timeout=15
-        )
+                "(KHTML, like Gecko) Chrome/47.0.2526.106 Safari/537.36"},
+            timeout=15)
         json_enc = r.json()
         return Video(json_enc)
 
@@ -149,24 +148,23 @@ def search(
 
     results = []
 
-    r = requests.post("https://search.htv-services.com/",
-                      headers={
-                          "User-Agent": "Mozilla/5.0 (Windows NT 6.3; WOW64) AppleWebKit/537.36 "
-                          "(KHTML, like Gecko) Chrome/47.0.2526.106 Safari/537.36",
-                          "Content-Type": "application/json;charset=UTF-8"
-                      },
-                      json={
-                          "blacklist": blacklist,
-                          "brands": brands,
-                          "order_by": order_by,
-                          "ordering": ordering,
-                          "page": page,
-                          "search_text": query,
-                          "tags": tags,
-                          "tags_mode": tags_mode,
-                      },
-                      timeout=15
-                      ).json()
+    r = requests.post(
+        "https://search.htv-services.com/",
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 6.3; WOW64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/47.0.2526.106 Safari/537.36",
+            "Content-Type": "application/json;charset=UTF-8"},
+        json={
+            "blacklist": blacklist,
+            "brands": brands,
+            "order_by": order_by,
+            "ordering": ordering,
+            "page": page,
+            "search_text": query,
+            "tags": tags,
+            "tags_mode": tags_mode,
+        },
+        timeout=15).json()
 
     j = json.loads(r["hits"])
 
@@ -315,8 +313,13 @@ def hanime(url: str = None):
     )
     parser.add_argument("--blacklist", "-b", help="Blacklisted tags",
                         action="store", nargs="+", default=[])
-    parser.add_argument("--company", "-c", help="Companies/brands to filter by",
-                        action="store", nargs="+", default=[])
+    parser.add_argument(
+        "--company",
+        "-c",
+        help="Companies/brands to filter by",
+        action="store",
+        nargs="+",
+        default=[])
     parser.add_argument(
         "--page", "-p", help="Page # of search results", default=1, type=int)
     parser.add_argument(
@@ -439,10 +442,14 @@ def hanime(url: str = None):
             sort_order = args.sort_order
 
             if sort_by not in SORT_OPTS_MAP:
-                print(f'Unknown sort method "{args.sort_by}", using sort by title')
+                print(
+                    f'Unknown sort method "{
+                        args.sort_by}", using sort by title')
                 sort_by = "title"
             if sort_order not in SORT_ORDER_MAP:
-                print(f'Unknown sort order "{args.sort_order}", using ascending order')
+                print(
+                    f'Unknown sort order "{
+                        args.sort_order}", using ascending order')
                 sort_order = "ascending"
 
             search_kwargs = {

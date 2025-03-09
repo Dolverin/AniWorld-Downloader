@@ -23,11 +23,11 @@ SOFTWARE.
 """
 
 import argparse
+import os
+import platform
 import shutil
 import subprocess
 import sys
-import platform
-import os
 from pathlib import Path
 
 
@@ -61,7 +61,8 @@ def capture_response(response, m3u8_counts):
 
 
 def fetch_m3u8_urls(url, browser_type):
-    from playwright.sync_api import sync_playwright, Error  # pylint: disable=import-outside-toplevel, import-error
+    from playwright.sync_api import (  # pylint: disable=import-outside-toplevel, import-error
+        Error, sync_playwright)
     m3u8_counts = {}
     referrer_data = {"referrer": None}
 
@@ -70,10 +71,15 @@ def fetch_m3u8_urls(url, browser_type):
         page = browser.new_page()
 
         # Handle popups: Close any popups that open during navigation
-        page.on("popup", lambda popup: popup.close())  # Automatically close popups
+        # Automatically close popups
+        page.on("popup", lambda popup: popup.close())
 
         page.on("route", lambda route: capture_request(route, referrer_data))
-        page.on("response", lambda response: capture_response(response, m3u8_counts))
+        page.on(
+            "response",
+            lambda response: capture_response(
+                response,
+                m3u8_counts))
 
         page.goto(url)
         page.wait_for_selector("#section-li", timeout=5000)
@@ -81,7 +87,8 @@ def fetch_m3u8_urls(url, browser_type):
 
         # Click the second li item
         try:
-            page.locator('ul#section-li > li').nth(1).locator('a.wp-btn-iframe__shortcode').click()
+            page.locator(
+                'ul#section-li > li').nth(1).locator('a.wp-btn-iframe__shortcode').click()
         except Error as e:
             print(f"Error clicking on the element: {e}")
 
@@ -97,7 +104,9 @@ def fetch_m3u8_urls(url, browser_type):
 
         page.wait_for_timeout(5000)
 
-        unique_m3u8_urls = [url for url, count in m3u8_counts.items() if count == 1]
+        unique_m3u8_urls = [
+            url for url,
+            count in m3u8_counts.items() if count == 1]
         browser.close()
         return unique_m3u8_urls, referrer_data["referrer"]
 
@@ -107,7 +116,8 @@ def process_urls(unique_m3u8_urls, use_mpv, referrer=None):
     for idx, url in enumerate(unique_m3u8_urls, start=1):
         print(f"{idx}. {url}")
 
-    choice = int(input("Select the M3U8 URL to download/play (by number): ")) - 1
+    choice = int(
+        input("Select the M3U8 URL to download/play (by number): ")) - 1
     selected_url = unique_m3u8_urls[choice]
 
     referrer_args = ["--referrer", referrer] if referrer else []
@@ -115,19 +125,28 @@ def process_urls(unique_m3u8_urls, use_mpv, referrer=None):
     if use_mpv:
         subprocess.run(["mpv", selected_url, *referrer_args], check=False)
     else:
-        output_path = os.path.join(os.path.expanduser("~/Downloads"), "%(title)s.%(ext)s")
-        subprocess.run(
-            ["yt-dlp", selected_url, "-o", output_path, "--no-warnings", *referrer_args],
-            check=False
-        )
+        output_path = os.path.join(
+            os.path.expanduser("~/Downloads"),
+            "%(title)s.%(ext)s")
+        subprocess.run(["yt-dlp",
+                        selected_url,
+                        "-o",
+                        output_path,
+                        "--no-warnings",
+                        *referrer_args],
+                       check=False)
 
 
 def jav(link: str = None):
     mpv = False
     if not link:
-        parser = argparse.ArgumentParser(description="Fetch and download/play video from a URL.")
+        parser = argparse.ArgumentParser(
+            description="Fetch and download/play video from a URL.")
         parser.add_argument("url", nargs="?", help="URL of the page to fetch.")
-        parser.add_argument("--mpv", action="store_true", help="Use mpv instead of yt-dlp.")
+        parser.add_argument(
+            "--mpv",
+            action="store_true",
+            help="Use mpv instead of yt-dlp.")
         args = parser.parse_args()
 
         clear_screen()
@@ -146,7 +165,8 @@ def jav(link: str = None):
         if unique_m3u8_urls:
             process_urls(unique_m3u8_urls, mpv, referrer)
         else:
-            print("No unique M3U8 URLs found with WebKit. Trying Firefox as a fallback...")
+            print(
+                "No unique M3U8 URLs found with WebKit. Trying Firefox as a fallback...")
 
         unique_m3u8_urls, referrer = fetch_m3u8_urls(input_url, "firefox")
         if unique_m3u8_urls:

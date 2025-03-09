@@ -22,8 +22,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-import platform
 import os
+import platform
 import socket
 
 
@@ -109,13 +109,10 @@ def adventure():
 
         conversation_history = [{'role': 'system', 'content': instruction}]
 
-        story_start = ollama.chat(
-            model='llama3.2',
-            messages=conversation_history + [
-                {'role': 'user', 'content': 'Begin the adventure with a short story.'}
-            ],
-            stream=False
-        )
+        story_start = ollama.chat(model='llama3.2',
+                                  messages=conversation_history + [{'role': 'user',
+                                                                    'content': 'Begin the adventure with a short story.'}],
+                                  stream=False)
 
         print(f"{story_start['message']['content']}")
         conversation_history.append({
@@ -130,7 +127,8 @@ def adventure():
                 print("Thanks for playing! Goodbye!")
                 break
 
-            conversation_history.append({'role': 'user', 'content': user_input})
+            conversation_history.append(
+                {'role': 'user', 'content': user_input})
 
             response = ollama.chat(
                 model='llama3.2',

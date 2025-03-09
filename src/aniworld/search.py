@@ -1,25 +1,19 @@
+import curses
 import html
 import logging
 import os
-import webbrowser
-import time
 import sys
-
-from typing import List, Dict, Optional
+import time
+import webbrowser
 from json import loads
 from json.decoder import JSONDecodeError
+from typing import Dict, List, Optional
 from urllib.parse import quote
 
-import curses
 from bs4 import BeautifulSoup
 
-
-from aniworld.common import (
-    clear_screen,
-    fetch_url_content,
-    display_ascii_art,
-    show_messagebox
-)
+from aniworld.common import (clear_screen, display_ascii_art,
+                             fetch_url_content, show_messagebox)
 
 
 def search_anime(slug: str = None, link: str = None, query: str = None) -> str:
@@ -64,21 +58,26 @@ def search_by_query(query: str) -> str:
         clear_screen()
         if not query:
             print(display_ascii_art())
-            
+
             # Platzhalter für die Indexierungslogs
             print("Lade Medien-Index... (bitte warten)")
-            
-            # Warte kurz, damit die Indexierungsmeldungen (die jetzt in der Logdatei erscheinen) 
-            # Zeit haben, zu erscheinen, bevor die Benutzeroberfläche vollständig geladen wird
+
+            # Warte kurz, damit die Indexierungsmeldungen (die jetzt in der Logdatei erscheinen)
+            # Zeit haben, zu erscheinen, bevor die Benutzeroberfläche
+            # vollständig geladen wird
             time.sleep(2)
-            
+
             # Lösche den Platzhalter
-            print("\033[A\033[K", end="")  # Terminal-Sequenz, um die letzte Zeile zu löschen
-            
+            # Terminal-Sequenz, um die letzte Zeile zu löschen
+            print("\033[A\033[K", end="")
+
             # Zeige Eingabeaufforderung
             query = input("Search for a series: ")
             if query.lower().strip() == "boku no piko":
-                show_messagebox("This is not on aniworld...\nThank god...", "Really?...", "info")
+                show_messagebox(
+                    "This is not on aniworld...\nThank god...",
+                    "Really?...",
+                    "info")
         else:
             logging.debug("Using provided query: %s", query)
 
@@ -104,7 +103,8 @@ def search_by_query(query: str) -> str:
 def fetch_anime_json(url: str):
     try:
         if os.getenv("USE_PLAYWRIGHT"):
-            page_content = html.unescape(fetch_url_content(url).decode('utf-8'))
+            page_content = html.unescape(
+                fetch_url_content(url).decode('utf-8'))
             soup = BeautifulSoup(page_content, 'html.parser')
             json_data = soup.find('pre').text
         else:
@@ -118,11 +118,22 @@ def fetch_anime_json(url: str):
     return None
 
 
-def display_menu(stdscr: curses.window, items: List[Dict[str, Optional[str]]]) -> Optional[str]:
+def display_menu(stdscr: curses.window,
+                 items: List[Dict[str, Optional[str]]]) -> Optional[str]:
     logging.debug("Starting display_menu function")
     current_row = 0
 
-    konami_code = ['UP', 'UP', 'DOWN', 'DOWN', 'LEFT', 'RIGHT', 'LEFT', 'RIGHT', 'b', 'a']
+    konami_code = [
+        'UP',
+        'UP',
+        'DOWN',
+        'DOWN',
+        'LEFT',
+        'RIGHT',
+        'LEFT',
+        'RIGHT',
+        'b',
+        'a']
     entered_keys = []
 
     key_map = {

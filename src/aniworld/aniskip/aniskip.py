@@ -6,16 +6,9 @@ from typing import Dict
 import requests
 from bs4 import BeautifulSoup
 
-from aniworld.common import (
-    fetch_anime_id,
-    fetch_url_content,
-    ftoi,
-    get_season_episode_count,
-    raise_runtime_error
-)
-
 from aniworld import globals as aniworld_globals
-
+from aniworld.common import (fetch_anime_id, fetch_url_content, ftoi,
+                             get_season_episode_count, raise_runtime_error)
 
 CHAPTER_FORMAT = "\n[CHAPTER]\nTIMEBASE=1/1000\nSTART={}\nEND={}\nTITLE={}\n"
 OPTION_FORMAT = "skip-{}_start={},skip-{}_end={}"
@@ -50,7 +43,11 @@ def build_options(metadata: Dict, chapters_file: str) -> str:
         skip_type = skip["skip_type"]
         st_time = skip["interval"]["start_time"]
         ed_time = skip["interval"]["end_time"]
-        logging.debug("Skip type: %s, start time: %s, end time: %s", skip_type, st_time, ed_time)
+        logging.debug(
+            "Skip type: %s, start time: %s, end time: %s",
+            skip_type,
+            st_time,
+            ed_time)
 
         ch_name = None
 
@@ -63,16 +60,29 @@ def build_options(metadata: Dict, chapters_file: str) -> str:
         logging.debug("Chapter name: %s", ch_name)
 
         with open(chapters_file, 'a', encoding='utf-8') as f:
-            f.write(CHAPTER_FORMAT.format(ftoi(st_time), ftoi(ed_time), ch_name))
+            f.write(
+                CHAPTER_FORMAT.format(
+                    ftoi(st_time),
+                    ftoi(ed_time),
+                    ch_name))
             logging.debug("Wrote chapter to file: %s", chapters_file)
 
-        options.append(OPTION_FORMAT.format(skip_type, st_time, skip_type, ed_time))
+        options.append(
+            OPTION_FORMAT.format(
+                skip_type,
+                st_time,
+                skip_type,
+                ed_time))
         logging.debug("Options so far: %s", options)
 
     if op_end:
         ep_ed = ed_start if ed_start else op_end
         with open(chapters_file, 'a', encoding='utf-8') as f:
-            f.write(CHAPTER_FORMAT.format(ftoi(op_end), ftoi(ep_ed), "Episode"))
+            f.write(
+                CHAPTER_FORMAT.format(
+                    ftoi(op_end),
+                    ftoi(ep_ed),
+                    "Episode"))
             logging.debug("Wrote episode chapter to file: %s", chapters_file)
 
     return ",".join(options)
@@ -114,18 +124,30 @@ def build_flags(anime_id: str, episode: int, chapters_file: str) -> str:
     return f"--chapters-file={chapters_file} --script-opts={options}"
 
 
-def aniskip(anime_title: str, anime_slug: str, episode: int, season: int) -> str:
-    logging.debug("Running aniskip for anime_title: %s, episode: %d", anime_title, episode)
-    anime_id = fetch_anime_id(anime_title, season) if not anime_title.isdigit() else anime_title
+def aniskip(
+        anime_title: str,
+        anime_slug: str,
+        episode: int,
+        season: int) -> str:
+    logging.debug(
+        "Running aniskip for anime_title: %s, episode: %d",
+        anime_title,
+        episode)
+    anime_id = fetch_anime_id(
+        anime_title,
+        season) if not anime_title.isdigit() else anime_title
     logging.debug("Fetched MAL ID: %s", anime_id)
     if not anime_id:
         logging.debug("No MAL ID found.")
         return ""
 
     logging.debug("Anime_Slug: %s", anime_slug)
-    if check_episodes(anime_id) == get_season_episode_count(anime_slug, str(season)):
+    if check_episodes(anime_id) == get_season_episode_count(
+            anime_slug, str(season)):
         with tempfile.NamedTemporaryFile(mode="w+", delete=False) as chapters_file:
-            logging.debug("Created temporary chapters file: %s", chapters_file.name)
+            logging.debug(
+                "Created temporary chapters file: %s",
+                chapters_file.name)
             return build_flags(anime_id, episode, chapters_file.name)
     else:
         logging.debug("Check_Episode: %s", check_episodes(anime_id))

@@ -1,26 +1,18 @@
-import os
 import logging
-import tempfile
+import os
 import random
 import sys
-from typing import List, Optional, Any, Dict, Tuple
+import tempfile
+from typing import Any, Dict, List, Optional, Tuple
 
 import colorlog
 
 # Import der neuen Konfiguration
-from aniworld.config import (
-    config,
-    is_debug_mode,
-    is_tor_enabled,
-    get_download_path,
-    get_default_action,
-    get_default_language,
-    get_default_provider,
-    get_default_watch_provider,
-    get_provider_priority,
-    get_terminal_size,
-    get_log_file_path
-)
+from aniworld.config import (config, get_default_action, get_default_language,
+                             get_default_provider, get_default_watch_provider,
+                             get_download_path, get_log_file_path,
+                             get_provider_priority, get_terminal_size,
+                             is_debug_mode, is_tor_enabled)
 
 # Abwärtskompatibilität: Alte Konstanten auf neue Konfigurationswerte verweisen
 IS_DEBUG_MODE = is_debug_mode()
@@ -61,20 +53,20 @@ def setup_file_handler():
         # Verwende RotatingFileHandler anstelle von FileHandler
         # für automatische Rotation bei Größenüberschreitung
         from logging.handlers import RotatingFileHandler
-        
+
         # Erstelle das Verzeichnis für die Logdatei, falls es nicht existiert
         log_dir = os.path.dirname(LOG_FILE_PATH)
         os.makedirs(log_dir, exist_ok=True)
-        
+
         # Erstelle einen RotatingFileHandler mit maximal 5MB pro Datei
         # und maximal 3 Backup-Dateien
         handler = RotatingFileHandler(
             LOG_FILE_PATH,
-            maxBytes=5*1024*1024,  # 5 MB
+            maxBytes=5 * 1024 * 1024,  # 5 MB
             backupCount=3,
             encoding='utf-8'
         )
-        
+
         # Setze ein klares Format für die Logeinträge
         formatter = logging.Formatter(
             '%(asctime)s - %(levelname)s - %(funcName)s - %(message)s',
@@ -110,61 +102,41 @@ logging.getLogger('urllib3').setLevel(logging.WARNING)
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.3",
-
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.3",
-
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) "
     "Gecko/20100101 Firefox/130.",
-
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.3",
-
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Edg/129.0.0.",
-
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Edg/128.0.0.",
-
     "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.",
-
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.",
-
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.3",
-
     "Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.3",
-
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.",
-
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.3",
-
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) SamsungBrowser/26.0 Chrome/122.0.0.0 Safari/537.3",
-
     "Mozilla/5.0 (Windows NT 6.1; rv:109.0) Gecko/20100101 Firefox/115.",
-
     "Mozilla/5.0 (Windows NT 10.0; WOW64; Trident/7.0; rv:11.0) like Geck",
-
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Config/91.2.1916.1",
-
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 OPR/112.0.0.",
-
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.3",
-
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.3",
-
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) "
-    "Gecko/20100101 Firefox/128."
-]
+    "Gecko/20100101 Firefox/128."]
 
 DEFAULT_USER_AGENT = random.choice(USER_AGENTS)
 

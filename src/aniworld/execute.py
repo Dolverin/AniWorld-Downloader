@@ -1,42 +1,29 @@
-import os
-import shutil
 import getpass
-import platform
 import hashlib
 import logging
-import time
+import os
+import platform
+import shutil
 import sys
+import time
 import traceback
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
 
 from bs4 import BeautifulSoup
 
-from aniworld.globals import PROVIDER_PRIORITY, DEFAULT_DOWNLOAD_PATH, USE_TOR
-from aniworld.common import (
-    clean_up_leftovers,
-    execute_command,
-    setup_aniskip,
-    fetch_url_content,
-    check_dependencies,
-    get_language_string,
-    get_season_and_episode_numbers,
-    print_progress_info,
-    countdown,
-    sanitize_path,
-    setup_autostart,
-    setup_autoexit
-)
-
-from aniworld.extractors import (
-    doodstream_get_direct_link,
-    streamtape_get_direct_link,
-    vidoza_get_direct_link,
-    voe_get_direct_link,
-    vidmoly_get_direct_link,
-    speedfiles_get_direct_link
-)
-
 from aniworld.aniskip import aniskip
+from aniworld.common import (check_dependencies, clean_up_leftovers, countdown,
+                             execute_command, fetch_url_content,
+                             get_language_string,
+                             get_season_and_episode_numbers,
+                             print_progress_info, sanitize_path, setup_aniskip,
+                             setup_autoexit, setup_autostart)
+from aniworld.extractors import (doodstream_get_direct_link,
+                                 speedfiles_get_direct_link,
+                                 streamtape_get_direct_link,
+                                 vidmoly_get_direct_link,
+                                 vidoza_get_direct_link, voe_get_direct_link)
+from aniworld.globals import DEFAULT_DOWNLOAD_PATH, PROVIDER_PRIORITY, USE_TOR
 
 
 def providers(soup: BeautifulSoup) -> Dict[str, Dict[int, str]]:
@@ -100,8 +87,14 @@ def build_command(  # pylint: disable=too-many-arguments, too-many-positional-ar
     return command
 
 
-def build_yt_dlp_command(link: str, output_file: str, selected_provider: str) -> List[str]:
-    logging.debug("Building yt-dlp command with link: %s, output_file: %s", link, output_file)
+def build_yt_dlp_command(
+        link: str,
+        output_file: str,
+        selected_provider: str) -> List[str]:
+    logging.debug(
+        "Building yt-dlp command with link: %s, output_file: %s",
+        link,
+        output_file)
     command = [
         "yt-dlp",
         "--fragment-retries", "infinite",
@@ -122,25 +115,27 @@ def build_yt_dlp_command(link: str, output_file: str, selected_provider: str) ->
     elif selected_provider == "Vidmoly":
         command.append("--add-header")
         command.append(f"Referer: {vidmoly_referer}")
-    
+
     # Tor-Proxy hinzufügen, wenn USE_TOR aktiviert ist
     if USE_TOR:
         try:
             from aniworld.common.tor_client import get_tor_client
-            
+
             tor_client = get_tor_client(use_tor=True)
             if tor_client and tor_client.is_running:
                 proxy_dict = tor_client.get_proxy_dict()
                 socks_proxy = proxy_dict.get('http', '').replace('http://', '')
-                
+
                 if socks_proxy:
                     logging.info(f"yt-dlp verwendet Tor-Proxy: {socks_proxy}")
                     command.append("--proxy")
                     command.append(f"socks5://{socks_proxy}")
         except ImportError:
-            logging.error("Tor-Unterstützung ist nicht verfügbar. Stelle sicher, dass die PySocks und stem Module installiert sind.")
+            logging.error(
+                "Tor-Unterstützung ist nicht verfügbar. Stelle sicher, dass die PySocks und stem Module installiert sind.")
         except Exception as e:
-            logging.error(f"Fehler beim Einrichten des Tor-Proxys für yt-dlp: {str(e)}")
+            logging.error(
+                f"Fehler beim Einrichten des Tor-Proxys für yt-dlp: {str(e)}")
 
     logging.debug("Built yt-dlp command: %s", command)
     return command
@@ -192,7 +187,8 @@ def get_anime_title(soup: BeautifulSoup) -> str:
     try:
         anime_title = soup.find('div', class_='hostSeriesTitle').text
     except AttributeError:
-        logging.warning("Could not use the link provided. Please try using a different one.")
+        logging.warning(
+            "Could not use the link provided. Please try using a different one.")
     if 'anime_title' in locals():
         logging.debug("Anime title: %s", anime_title)
         return anime_title
@@ -215,13 +211,15 @@ def fetch_direct_link(provider_function, request_url: str) -> str:
     return direct_link
 
 
-def build_syncplay_command(
-    link: str, mpv_title: str, selected_provider: str, aniskip_options: Optional[List[str]] = None
-) -> List[str]:
+def build_syncplay_command(link: str,
+                           mpv_title: str,
+                           selected_provider: str,
+                           aniskip_options: Optional[List[str]] = None) -> List[str]:
     logging.debug(
         "Building syncplay command with link: %s, title: %s, aniskip_options: %s",
-        link, mpv_title, aniskip_options
-    )
+        link,
+        mpv_title,
+        aniskip_options)
     syncplay = "SyncplayConsole" if platform.system() == "Windows" else "syncplay"
     anime_title = mpv_title.split(" - ")[0].replace(" ", "_")
 
@@ -242,7 +240,9 @@ def build_syncplay_command(
             f"aniworld-{hashlib.sha256((syncplay_password + anime_title).encode()).hexdigest()}"
         )
     else:
-        room_name = f"aniworld-{hashlib.sha256(anime_title.encode()).hexdigest()}"
+        room_name = f"aniworld-{
+            hashlib.sha256(
+                anime_title.encode()).hexdigest()}"
 
     if not syncplay_hostname:
         syncplay_hostname = "syncplay.pl:8997"
@@ -322,8 +322,12 @@ def perform_action(params: Dict[str, Any]) -> None:
             if not platform.system() == "Windows":
                 countdown()
         handle_watch_action(
-            link, mpv_title, aniskip_selected, aniskip_options, only_command, provider
-        )
+            link,
+            mpv_title,
+            aniskip_selected,
+            aniskip_options,
+            only_command,
+            provider)
     elif action == "Download":
         handle_download_action(params)
     elif action == "Syncplay":
@@ -377,7 +381,12 @@ def handle_watch_action(  # pylint: disable=too-many-arguments, too-many-positio
         else:
             print_progress_info(msg)
     command = build_command(
-        link, mpv_title, "mpv", aniskip_selected, selected_provider, aniskip_options)
+        link,
+        mpv_title,
+        "mpv",
+        aniskip_selected,
+        selected_provider,
+        aniskip_options)
     logging.debug("Executing command: %s", command)
     execute_command(command, only_command)
     logging.debug("MPV has finished.\nBye bye!")
@@ -385,7 +394,7 @@ def handle_watch_action(  # pylint: disable=too-many-arguments, too-many-positio
 
 def handle_download_action(params: Dict[str, Any]) -> None:
     logging.debug("Action is Download")
-    
+
     # Funktion für die Übersetzung der Sprachkodes
     def get_language_from_key(key: int) -> str:
         key_mapping = {
@@ -393,29 +402,30 @@ def handle_download_action(params: Dict[str, Any]) -> None:
             2: "English Sub",
             3: "German Sub"
         }
-        
+
         language = key_mapping.get(key, "Unknown Key")
-        
+
         if language == "Unknown Key":
             raise ValueError("Key not valid.")
-            
+
         return language
-    
+
     # Initialisiere Variablen für Download-Statistiken
     download_speed = 0.0
     file_size = 0
     download_duration = 0.0
     download_status = "completed"  # Standardstatus
-    
+
     # Download-Startzeit
     download_start_time = time.time()
-    
+
     # Keine Pfadexpansion für absolute Pfade nötig
     download_path = DEFAULT_DOWNLOAD_PATH
-    # Wenn es sich um einen relativen Pfad oder einen Pfad mit ~ handelt, dann expandieren
+    # Wenn es sich um einen relativen Pfad oder einen Pfad mit ~ handelt, dann
+    # expandieren
     if DEFAULT_DOWNLOAD_PATH.startswith('~'):
         download_path = os.path.expanduser(DEFAULT_DOWNLOAD_PATH)
-    
+
     direct_link = params['direct_link']
     logging.debug("Direct link: %s", direct_link)
 
@@ -435,7 +445,10 @@ def handle_download_action(params: Dict[str, Any]) -> None:
 
     selected_provider = params['provider']
     language = get_language_string(int(params['language']))
-    logging.debug("Selected provider: %s language: %s", selected_provider, language)
+    logging.debug(
+        "Selected provider: %s language: %s",
+        selected_provider,
+        language)
 
     if params['season_title'] and params['episode_title']:
         season_title = params['season_title']
@@ -446,13 +459,16 @@ def handle_download_action(params: Dict[str, Any]) -> None:
         season_title = f"Staffel {season_number}"
         episode_title = f"Folge {episode_number}"
 
-    logging.debug("Season title: %s, Episode title: %s", season_title, episode_title)
+    logging.debug(
+        "Season title: %s, Episode title: %s",
+        season_title,
+        episode_title)
 
     # Formatierte Staffel- und Episodennummern für das Standardformat
     if params.get('season_number'):
         season_num = int(params['season_number'])
         episode_num = int(params['episode_number'])
-        
+
         # Formatiere die Episoden- und Staffelnummern mit führenden Nullen
         if season_num < 10:
             season_str = f"00{season_num}"
@@ -460,20 +476,21 @@ def handle_download_action(params: Dict[str, Any]) -> None:
             season_str = f"0{season_num}"
         else:
             season_str = str(season_num)
-            
+
         if episode_num < 10:
             episode_str = f"00{episode_num}"
         elif episode_num < 100:
             episode_str = f"0{episode_num}"
         else:
             episode_str = str(episode_num)
-            
+
         # Verwende das Standardformat mit S000E000
         file_name = f"{sanitized_anime_title} - S{season_str}E{episode_str} ({language}).mp4"
     else:
-        # Falls keine Season/Episode-Nummern vorhanden sind, verwende die Titel-Version
+        # Falls keine Season/Episode-Nummern vorhanden sind, verwende die
+        # Titel-Version
         file_name = f"{sanitized_anime_title} - {season_title} - {episode_title} [{language}].mp4"
-    
+
     file_path = os.path.join(anime_dir, file_name)
     logging.debug("File path: %s", file_path)
 
@@ -482,88 +499,104 @@ def handle_download_action(params: Dict[str, Any]) -> None:
         if params['only_direct_link']:
             print(direct_link)
         elif params['only_command']:
-            print(" ".join(
-                build_yt_dlp_command(direct_link, file_path, selected_provider))
-            )
+            print(
+                " ".join(
+                    build_yt_dlp_command(
+                        direct_link,
+                        file_path,
+                        selected_provider)))
         elif os.path.getsize(file_path) > 0:  # Datei existiert und ist nicht leer
             logging.info("Datei existiert bereits: %s", file_path)
             print_progress_info(f"Datei existiert bereits: '{file_path}'")
             download_status = "skipped"
-        else:  # Datei existiert aber ist leer (möglicherweise abgebrochener Download)
-            logging.warning("Leere Datei gefunden, starte Download neu: %s", file_path)
+        # Datei existiert aber ist leer (möglicherweise abgebrochener Download)
+        else:
+            logging.warning(
+                "Leere Datei gefunden, starte Download neu: %s",
+                file_path)
             os.remove(file_path)  # Leere Datei entfernen
-            command = build_yt_dlp_command(direct_link, file_path, selected_provider)
+            command = build_yt_dlp_command(
+                direct_link, file_path, selected_provider)
             try:
                 execute_command(command, params['only_command'])
             except KeyboardInterrupt:
-                logging.debug("KeyboardInterrupt encountered, cleaning up leftovers")
+                logging.debug(
+                    "KeyboardInterrupt encountered, cleaning up leftovers")
                 clean_up_leftovers(os.path.dirname(file_path))
                 download_status = "cancelled"
             except Exception as e:
                 logging.error(f"Download-Fehler: {e}")
                 download_status = "failed"
     else:
-        command = build_yt_dlp_command(direct_link, file_path, selected_provider)
-        
+        command = build_yt_dlp_command(
+            direct_link, file_path, selected_provider)
+
         max_download_attempts = 3 if USE_TOR else 1
         download_attempt = 0
         success = False
-        
+
         while download_attempt < max_download_attempts and not success:
             try:
                 if download_attempt > 0:
-                    logging.info(f"Download-Wiederholungsversuch {download_attempt}/{max_download_attempts-1}")
-                    
+                    logging.info(
+                        f"Download-Wiederholungsversuch {download_attempt}/{max_download_attempts - 1}")
+
                     # Bei Tor-Nutzung eine neue IP-Adresse anfordern
                     if USE_TOR:
                         try:
-                            from aniworld.common.tor_client import get_tor_client
+                            from aniworld.common.tor_client import \
+                                get_tor_client
                             tor_client = get_tor_client(use_tor=True)
                             tor_client.new_identity()
-                            logging.info("Neue Tor-IP für Download-Wiederholungsversuch angefordert")
+                            logging.info(
+                                "Neue Tor-IP für Download-Wiederholungsversuch angefordert")
                         except ImportError:
-                            logging.error("Tor-Unterstützung ist nicht verfügbar. Stelle sicher, dass die PySocks und stem Module installiert sind.")
+                            logging.error(
+                                "Tor-Unterstützung ist nicht verfügbar. Stelle sicher, dass die PySocks und stem Module installiert sind.")
                         except Exception as e:
-                            logging.error(f"Fehler beim Wechseln der Tor-IP: {e}")
-                
+                            logging.error(
+                                f"Fehler beim Wechseln der Tor-IP: {e}")
+
                 execute_command(command, params['only_command'])
-                
+
                 # Download erfolgreich abgeschlossen, Statistiken erfassen
                 download_end_time = time.time()
                 download_duration = download_end_time - download_start_time
-                
+
                 # Dateigröße ermitteln, falls die Datei existiert
                 if os.path.exists(file_path):
                     file_size = os.path.getsize(file_path)
                     # Durchschnittsgeschwindigkeit berechnen (Bytes/Sekunde)
                     if download_duration > 0:
                         download_speed = file_size / download_duration
-                
+
                 success = True
                 download_status = "completed"
-                
+
             except KeyboardInterrupt:
-                logging.debug("KeyboardInterrupt encountered, cleaning up leftovers")
+                logging.debug(
+                    "KeyboardInterrupt encountered, cleaning up leftovers")
                 clean_up_leftovers(os.path.dirname(file_path))
                 download_status = "cancelled"
                 break
-                
+
             except Exception as e:
                 logging.error(f"Download-Fehler: {e}")
                 download_status = "failed"
                 download_attempt += 1
-                
+
                 # Wenn weitere Versuche möglich sind, kurz warten
                 if download_attempt < max_download_attempts:
                     time.sleep(2)
                 else:
-                    logging.error(f"Maximale Anzahl an Download-Versuchen ({max_download_attempts}) erreicht.")
-    
+                    logging.error(
+                        f"Maximale Anzahl an Download-Versuchen ({max_download_attempts}) erreicht.")
+
     # Download-Statistiken in der Datenbank speichern
     try:
         from aniworld.common.db import get_db
         db = get_db()
-        
+
         # Original-Staffel- und Episodennummern für die DB verwenden
         db.save_download_stats(
             anime_title=params['anime_title'],
@@ -576,17 +609,22 @@ def handle_download_action(params: Dict[str, Any]) -> None:
             download_duration=download_duration,
             status=download_status
         )
-        logging.debug(f"Download-Statistik erfasst: Status={download_status}, Dauer={download_duration:.2f}s, Größe={file_size or 'unbekannt'}")
+        logging.debug(
+            f"Download-Statistik erfasst: Status={download_status}, Dauer={
+                download_duration:.2f}s, Größe={
+                file_size or 'unbekannt'}")
 
         # Aktualisiere die Datenbank-Indizierung für das Anime-Verzeichnis
         if download_status == "completed" and os.path.exists(file_path):
             anime_dir = os.path.dirname(file_path)
-            logging.info(f"Aktualisiere Datenbank-Index für neu heruntergeladene Episode in: {anime_dir}")
+            logging.info(
+                f"Aktualisiere Datenbank-Index für neu heruntergeladene Episode in: {anime_dir}")
             db.scan_directory(anime_dir, force_rescan=True)
             logging.info("Datenbank-Index aktualisiert")
     except Exception as e:
-        logging.error(f"Fehler beim Speichern der Download-Statistik oder beim Aktualisieren des Index: {e}")
-    
+        logging.error(
+            f"Fehler beim Speichern der Download-Statistik oder beim Aktualisieren des Index: {e}")
+
     logging.debug("yt-dlp has finished.\nBye bye!")
     if not platform.system() == "Windows":
         print(f"Downloaded to '{file_path}'")
@@ -610,7 +648,8 @@ def handle_syncplay_action(
             print(msg)
         else:
             print_progress_info(msg)
-    command = build_syncplay_command(link, mpv_title, selected_provider, aniskip_options)
+    command = build_syncplay_command(
+        link, mpv_title, selected_provider, aniskip_options)
     logging.debug("Executing command: %s", command)
     execute_command(command, only_command)
     logging.debug("Syncplay has finished.\nBye bye!")
@@ -619,10 +658,10 @@ def handle_syncplay_action(
 def execute(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Führt die Verarbeitung einer Episode mit den angegebenen Parametern aus.
-    
+
     Args:
         params: Die Parameter für die Verarbeitung
-        
+
     Returns:
         Optional[Dict]: Bei Erfolg None, bei Fehler ein Dict mit Fehlermeldungen
     """
@@ -641,22 +680,22 @@ def execute(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 episode_params['episode_url'] = episode_url
                 if 'selected_episodes' in episode_params:
                     del episode_params['selected_episodes']
-                
+
                 # Episode verarbeiten
                 result = process_episode(episode_params)
                 if result:  # Fehler aufgetreten
                     errors.append(result)
-            
+
             # Ergebnis zurückgeben
             if errors:
                 return errors[0]  # Erstmal nur den ersten Fehler zurückgeben
             return None
         else:
-            logging.error("Weder episode_url noch selected_episodes in params angegeben")
+            logging.error(
+                "Weder episode_url noch selected_episodes in params angegeben")
             return {
                 "error": "Fehlende Parameter",
-                "message": "Weder episode_url noch selected_episodes in params angegeben"
-            }
+                "message": "Weder episode_url noch selected_episodes in params angegeben"}
     except Exception as e:
         logging.exception(f"Unerwarteter Fehler bei der Ausführung: {e}")
         return {
@@ -669,10 +708,10 @@ def execute(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 def process_episode(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Verarbeitet eine Episode und führt die ausgewählte Aktion aus.
-    
+
     Args:
         params: Parameter für die Verarbeitung
-        
+
     Returns:
         Optional[Dict]: Bei Erfolg None, bei Fehler ein Dict mit Fehlermeldungen
     """
@@ -682,12 +721,13 @@ def process_episode(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         html_content = fetch_url_content(params['episode_url'])
 
         if not html_content:
-            logging.error("Konnte keine HTML-Inhalte für URL abrufen: %s", params['episode_url'])
+            logging.error(
+                "Konnte keine HTML-Inhalte für URL abrufen: %s",
+                params['episode_url'])
             return {
                 "error": "Verbindungsfehler",
                 "message": f"Konnte keine HTML-Inhalte für die Episode abrufen.",
-                "details": "Bitte überprüfen Sie Ihre Internetverbindung oder versuchen Sie es später erneut."
-            }
+                "details": "Bitte überprüfen Sie Ihre Internetverbindung oder versuchen Sie es später erneut."}
 
         soup = BeautifulSoup(html_content, 'html.parser')
         provider_data = providers(soup)
@@ -697,7 +737,8 @@ def process_episode(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         episode_name = get_episode_title(soup)
 
         # Process the anime, season, and episode numbers
-        season_number, episode_number = get_season_and_episode_numbers(params['episode_url'])
+        season_number, episode_number = get_season_and_episode_numbers(
+            params['episode_url'])
 
         # Extract season and episode titles from the URL
         parts = params['episode_url'].split('/')
@@ -723,13 +764,23 @@ def process_episode(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 provider_tried = True
                 logging.info("Versuche Provider: %s", provider)
                 try:
-                    process_provider(provider, provider_data, params, anime_title, season_title, episode_title)
+                    process_provider(
+                        provider,
+                        provider_data,
+                        params,
+                        anime_title,
+                        season_title,
+                        episode_title)
                     return None  # Erfolg - kein Fehler
                 except ValueError as e:
-                    logging.warning("Provider %s fehlgeschlagen: %s", provider, str(e))
+                    logging.warning(
+                        "Provider %s fehlgeschlagen: %s", provider, str(e))
                     continue  # Try the next provider
                 except Exception as e:
-                    logging.error("Unerwarteter Fehler bei Provider %s: %s", provider, str(e))
+                    logging.error(
+                        "Unerwarteter Fehler bei Provider %s: %s",
+                        provider,
+                        str(e))
                     continue  # Try the next provider
 
         # If we reached here, all providers failed
@@ -740,8 +791,10 @@ def process_episode(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 for lang_key in provider_data[provider]:
                     lang = get_language_string(lang_key)
                     available_languages.add(lang)
-            
-            logging.error("Alle verfügbaren Provider sind fehlgeschlagen für Episode: %s", params['episode_url'])
+
+            logging.error(
+                "Alle verfügbaren Provider sind fehlgeschlagen für Episode: %s",
+                params['episode_url'])
             return {
                 "error": "Keine passenden Provider",
                 "message": f"Keine Provider für {get_language_string(int(params['language']))} verfügbar.",
@@ -749,13 +802,14 @@ def process_episode(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 "episode_url": params['episode_url']
             }
         else:
-            logging.error("Keine unterstützten Provider für die URL verfügbar: %s", params['episode_url'])
+            logging.error(
+                "Keine unterstützten Provider für die URL verfügbar: %s",
+                params['episode_url'])
             return {
                 "error": "Keine Provider",
                 "message": "Keine unterstützten Provider für diese Episode gefunden.",
                 "available_languages": [],
-                "episode_url": params['episode_url']
-            }
+                "episode_url": params['episode_url']}
     except Exception as e:
         logging.exception("Fehler bei der Verarbeitung der Episode: %s", e)
         return {
@@ -766,10 +820,16 @@ def process_episode(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         }
 
 
-def process_provider(provider: str, provider_data: dict, params: dict, anime_title: str, season_title: str, episode_title: str) -> None:
+def process_provider(
+        provider: str,
+        provider_data: dict,
+        params: dict,
+        anime_title: str,
+        season_title: str,
+        episode_title: str) -> None:
     """
     Verarbeitet einen Provider und führt die entsprechende Aktion aus.
-    
+
     Args:
         provider: Der zu verwendende Provider (z.B. 'VOE', 'Vidoza')
         provider_data: Die Provider-Daten für alle verfügbaren Provider
@@ -779,17 +839,20 @@ def process_provider(provider: str, provider_data: dict, params: dict, anime_tit
         episode_title: Der Titel der Episode
     """
     logging.debug("Processing provider: %s", provider)
-    
+
     # Prüfe, ob die ausgewählte Sprache für diesen Provider verfügbar ist
     lang_key = int(params['language'])
     if lang_key not in provider_data[provider]:
         # Sammle verfügbare Sprachen für diesen Provider
-        available_langs = [get_language_string(key) for key in provider_data[provider].keys()]
-        raise ValueError(f"Keine verfügbaren Sprachen für Provider {provider} die der ausgewählten Sprache {get_language_string(lang_key)} entsprechen. \nVerfügbare Sprachen: {available_langs}")
-    
+        available_langs = [get_language_string(
+            key) for key in provider_data[provider].keys()]
+        raise ValueError(
+            f"Keine verfügbaren Sprachen für Provider {provider} die der ausgewählten Sprache {
+                get_language_string(lang_key)} entsprechen. \nVerfügbare Sprachen: {available_langs}")
+
     # Extrahiere den direkten Link für diesen Provider und die gewählte Sprache
     request_url = provider_data[provider][lang_key]
-    
+
     # Provider-Funktion auswählen und direkten Link abrufen
     provider_function = None
     if provider == "VOE":
@@ -799,39 +862,45 @@ def process_provider(provider: str, provider_data: dict, params: dict, anime_tit
         from aniworld.extractors.provider.vidoza import vidoza_get_direct_link
         provider_function = vidoza_get_direct_link
     elif provider == "Streamtape":
-        from aniworld.extractors.provider.streamtape import streamtape_get_direct_link
+        from aniworld.extractors.provider.streamtape import \
+            streamtape_get_direct_link
         provider_function = streamtape_get_direct_link
     elif provider == "Doodstream":
-        from aniworld.extractors.provider.doodstream import doodstream_get_direct_link
+        from aniworld.extractors.provider.doodstream import \
+            doodstream_get_direct_link
         provider_function = doodstream_get_direct_link
     elif provider == "Vidmoly":
-        from aniworld.extractors.provider.vidmoly import vidmoly_get_direct_link
+        from aniworld.extractors.provider.vidmoly import \
+            vidmoly_get_direct_link
         provider_function = vidmoly_get_direct_link
     elif provider == "SpeedFiles":
-        from aniworld.extractors.provider.speedfiles import speedfiles_get_direct_link
+        from aniworld.extractors.provider.speedfiles import \
+            speedfiles_get_direct_link
         provider_function = speedfiles_get_direct_link
     else:
         raise ValueError(f"Unbekannter Provider: {provider}")
-    
+
     direct_link = fetch_direct_link(provider_function, request_url)
-    
+
     if direct_link is None:
-        raise ValueError(f"Provider {provider} konnte keinen direkten Link liefern")
-    
+        raise ValueError(
+            f"Provider {provider} konnte keinen direkten Link liefern")
+
     # Bei nur Direct Link Ausgabe den direkten Link zurückgeben
     if params.get('only_direct_link', False):
         print(direct_link)
         return
-    
+
     # Hole season_number und episode_number aus dem URL-Pfad
-    season_number, episode_number = get_season_and_episode_numbers(params['episode_url'])
-    
+    season_number, episode_number = get_season_and_episode_numbers(
+        params['episode_url'])
+
     # Anime-Titel aus dem Slug ableiten wenn nicht angegeben
     if not anime_title:
         anime_title = params.get('anime_title', '')
         if not anime_title and 'anime_slug' in params:
             anime_title = params['anime_slug'].replace('-', ' ').title()
-    
+
     # Baue Parameter für die Aktion
     action_params = {
         'provider': provider,
@@ -851,6 +920,6 @@ def process_provider(provider: str, provider_data: dict, params: dict, anime_tit
         'only_command': params.get('only_command', False),
         'force_download': params.get('force_download', False)
     }
-    
+
     # Führe die Aktion aus
     perform_action(action_params)
