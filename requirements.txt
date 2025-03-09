@@ -1,0 +1,25 @@
+# Hauptabhängigkeiten
+requests>=2.32.0
+bs4>=0.0.2
+beautifulsoup4>=4.13.0
+npyscreen>=4.10.5
+colorlog>=6.9.0
+py7zr>=0.22.0
+packaging>=24.0
+yt-dlp>=2025.2.0
+
+# Tor-Unterstützung
+stem>=1.8.0
+PySocks>=1.7.1
+
+# Betriebssystemspezifische Abhängigkeiten
+# windows-curses>=2.3.0 ; platform_system=="Windows"
+
+# Optionale Abhängigkeiten für Playwright-Unterstützung
+# playwright>=1.40.0
+
+# Für Entwicklung und Tests
+# pylint>=2.17.0
+# flake8>=6.0.0
+# build>=1.0.0
+# twine>=4.0.0 

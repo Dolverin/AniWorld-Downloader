@@ -573,3 +573,43 @@ If you have concerns or objections about the content accessed via this program, 
 [![Star History Chart](https://api.star-history.com/svg?repos=phoenixthrush/Aniworld-Downloader&type=Date)](https://star-history.com/#phoenixthrush/Aniworld-Downloader&Date)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Installation
+
+### Dependencies / Abhängigkeiten
+
+```bash
+pip install -r requirements.txt
+```
+
+Optional für Tor-Unterstützung (anonymes Surfen und Umgehen von IP-Blockierungen):
+```bash
+# Auf Debian/Ubuntu
+sudo apt install tor
+
+# Auf Fedora
+sudo dnf install tor
+
+# Auf Arch Linux
+sudo pacman -S tor
+
+# Auf macOS mit Homebrew
+brew install tor
+
+# Auf Windows
+# Lade das Tor Expert Bundle von https://www.torproject.org/download/tor/ herunter
+```
+
+## Usage / Verwendung
+
+```
+usage: aniworld [-h] [--list] [--title TITLE] [--provider PROVIDER] [--season SEASON] [--episode EPISODE] [--language LANGUAGE]
+               [--debug] [--output-directory OUTPUT_DIRECTORY] [--action ACTION] [--force-download] [--aniskip] [--keep-watching]
+               [--only-direct-link] [--only-command] [--update UPDATE] [--uninstall] [--syncplay] [--syncplay-server SYNCPLAY_SERVER]
+               [--syncplay-room SYNCPLAY_ROOM] [--syncplay-password SYNCPLAY_PASSWORD [SYNCPLAY_PASSWORD ...]] [--random-anime [RANDOM_ANIME]]
+               [--proxy PROXY] [--use-playwright] [--use-tor]
+               [query]
+
+## Neuer Parameter für Tor-Nutzung:
+
+`--use-tor, -t` - Verwende Tor-Netzwerk für Anonymität und zum Umgehen von IP-Blockierungen

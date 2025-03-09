@@ -85,7 +85,40 @@ def fetch_url_content_without_playwright(
     }
 
     logging.debug("Using headers: %s", headers)
-
+    
+    # Tor verwenden, wenn aktiviert
+    if aniworld_globals.USE_TOR:
+        try:
+            from aniworld.common.tor_client import get_tor_client
+            
+            logging.debug("Verwende Tor für Anfrage: %s", url)
+            tor_client = get_tor_client(use_tor=True)
+            
+            response, success = tor_client.make_request(
+                url, 
+                method="GET",
+                headers=headers, 
+                auto_retry=aniworld_globals.TOR_AUTO_RETRY,
+                max_retries=aniworld_globals.TOR_MAX_RETRIES,
+                timeout=300
+            )
+            
+            if success and response:
+                if "Deine Anfrage wurde als Spam erkannt." in response.text:
+                    logging.critical(
+                        "Deine IP-Adresse wurde blockiert, obwohl Tor verwendet wurde. "
+                        "Versuche es später erneut oder erhöhe TOR_MAX_RETRIES."
+                    )
+                return response.content
+            else:
+                logging.warning("Tor-Anfrage fehlgeschlagen, verwende alternative Methode")
+                # Wenn Tor fehlschlägt, versuche es mit normaler Anfrage
+        except ImportError:
+            logging.error("Tor-Unterstützung ist nicht verfügbar. Stelle sicher, dass die PySocks und stem Module installiert sind.")
+        except Exception as e:
+            logging.error("Fehler bei Tor-Anfrage: %s", str(e))
+    
+    # Normaler Proxy-Modus, wenn Tor nicht aktiviert oder fehlgeschlagen ist
     proxies = {}
     if proxy:
         proxies = {

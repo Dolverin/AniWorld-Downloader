@@ -44,3 +44,57 @@ from .adventure import adventure
 
 # Importiere die neue Datenbankfunktionalität
 from aniworld.common.db import get_db
+
+# Import für Tor-Funktionalität
+try:
+    from aniworld.common.tor_client import get_tor_client, TorClient
+except ImportError:
+    # Fehlende Tor-Bibliotheken werden bei Bedarf zur Laufzeit gemeldet
+    pass
+
+def get_tor_version() -> str:
+    """Gibt die Tor-Version zurück, wenn Tor verfügbar ist."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["tor", "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False
+        )
+        if result.returncode == 0:
+            # Format: "Tor version X.Y.Z."
+            version_line = result.stdout.strip().split('\n')[0]
+            if "version" in version_line:
+                return version_line.split("version")[1].strip().rstrip(".")
+        return "nicht verfügbar"
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return "nicht installiert"
+
+def is_tor_running() -> bool:
+    """Prüft, ob der Tor-Dienst auf dem System läuft."""
+    try:
+        import subprocess
+        import platform
+        
+        if platform.system() == "Windows":
+            cmd = ["tasklist", "/FI", "IMAGENAME eq tor.exe", "/NH"]
+        else:  # Linux/Mac
+            cmd = ["pgrep", "-x", "tor"]
+            
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False
+        )
+        
+        # Wenn der Prozess gefunden wurde, ist Tor aktiv
+        if result.returncode == 0 and result.stdout.strip():
+            return True
+            
+        return False
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return False
