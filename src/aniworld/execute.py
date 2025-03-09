@@ -923,3 +923,22 @@ def process_provider(
 
     # Führe die Aktion aus
     perform_action(action_params)
+
+
+def print_progress_info(msg: str):
+    """
+    Zeigt eine Fortschrittsmeldung an.
+    
+    Diese Funktion ist ein Hook, der später durch eine DownloadMonitorWidget-Implementierung 
+    erweitert werden kann.
+    
+    Args:
+        msg (str): Die anzuzeigende Nachricht
+    """
+    logging.debug(f"Progress info: {msg}")
+    
+    if platform.system() == "Windows":
+        command = f"""cmd /c echo {msg.replace('"', "'")} """
+        execute_command(command, only_command=False)
+    else:
+        print(msg)

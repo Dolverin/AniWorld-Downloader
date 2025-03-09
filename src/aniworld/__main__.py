@@ -92,6 +92,135 @@ class CustomTheme(npyscreen.ThemeManager):
     }
 
 
+# Widget für die Anzeige der Download-Fortschritte
+class DownloadMonitorWidget(npyscreen.BoxTitle):
+    """Widget zur Anzeige der Download-Fortschritte in einer übersichtlichen Liste."""
+    
+    def __init__(self, *args, **keywords):
+        super(DownloadMonitorWidget, self).__init__(*args, **keywords)
+        self.downloads = {}  # Format: {id: {title, status, start_time, etc.}}
+        self.next_id = 1  # ID für den nächsten Download
+        self.max_downloads_visible = 8  # Maximale Anzahl der angezeigten Downloads
+        
+    def add_download(self, title, episode_url):
+        """Fügt einen neuen Download zur Überwachung hinzu."""
+        download_id = self.next_id
+        self.next_id += 1
+        
+        self.downloads[download_id] = {
+            'title': title,
+            'episode_url': episode_url,
+            'status': 'Warte...',
+            'progress': 0,
+            'start_time': time.time(),
+            'end_time': None,
+            'visible': True
+        }
+        
+        self.update_display()
+        return download_id
+        
+    def update_download(self, download_id, status=None, progress=None, end_time=None):
+        """Aktualisiert den Status eines bestehenden Downloads."""
+        if download_id not in self.downloads:
+            return False
+            
+        if status:
+            self.downloads[download_id]['status'] = status
+        if progress is not None:
+            self.downloads[download_id]['progress'] = progress
+        if end_time:
+            self.downloads[download_id]['end_time'] = end_time
+        elif status in ['Abgeschlossen', 'Fehler', 'Abgebrochen']:
+            self.downloads[download_id]['end_time'] = time.time()
+            
+        self.update_display()
+        return True
+        
+    def update_display(self):
+        """Aktualisiert die Anzeige aller Downloads."""
+        if not self.downloads:
+            self.values = ["Keine laufenden Downloads."]
+            self.display()
+            return
+        
+        # Sortiere Downloads: Aktive zuerst, dann nach Startzeit (neueste zuerst)
+        sorted_downloads = sorted(
+            self.downloads.items(),
+            key=lambda x: (
+                x[1]['end_time'] is not None,  # Aktive Downloads zuerst
+                -(x[1]['start_time'] if x[1]['end_time'] is None else 0)  # Neueste zuerst
+            )
+        )
+        
+        # Formatiere die Anzeige für jeden Download
+        display_lines = []
+        visible_count = 0
+        
+        for download_id, download in sorted_downloads:
+            if visible_count >= self.max_downloads_visible:
+                # Markiere den Download als nicht sichtbar
+                download['visible'] = False
+                continue
+                
+            download['visible'] = True
+            visible_count += 1
+            
+            title = download['title']
+            status = download['status']
+            elapsed_time = ""
+            
+            # Berechne verstrichene Zeit
+            if download['end_time']:
+                duration = download['end_time'] - download['start_time']
+                elapsed_time = f" [{duration:.1f}s]"
+            else:
+                duration = time.time() - download['start_time']
+                elapsed_time = f" [{duration:.1f}s...]"
+            
+            # Kürze zu langen Titel
+            max_title_length = 40
+            if len(title) > max_title_length:
+                title = title[:max_title_length-3] + "..."
+                
+            # Erstelle Statusanzeige mit Farben
+            if status == 'Abgeschlossen':
+                status_display = "[" + "\033[92m" + "✓" + "\033[0m" + "]"  # Grün
+            elif status == 'Fehler':
+                status_display = "[" + "\033[91m" + "✗" + "\033[0m" + "]"  # Rot
+            elif status == 'Wird übersprungen':
+                status_display = "[" + "\033[93m" + "⏭" + "\033[0m" + "]"  # Gelb
+            elif status == 'Lädt...':
+                status_display = "[" + "\033[94m" + "↓" + "\033[0m" + "]"  # Blau
+            elif status == 'Warte...':
+                status_display = "[" + "\033[90m" + "⋯" + "\033[0m" + "]"  # Grau
+            else:
+                status_display = "[" + status + "]"
+            
+            display_line = f"{status_display} {title} - {status}{elapsed_time}"
+            display_lines.append(display_line)
+        
+        # Wenn es mehr Downloads gibt als angezeigt werden können
+        if len(self.downloads) > self.max_downloads_visible:
+            display_lines.append(f"(+ {len(self.downloads) - visible_count} weitere Downloads...)")
+            
+        self.values = display_lines
+        self.display()
+        
+    def clear_completed(self):
+        """Entfernt alle abgeschlossenen Downloads aus der Liste."""
+        self.downloads = {
+            id: download for id, download in self.downloads.items()
+            if download['status'] not in ['Abgeschlossen', 'Fehler', 'Abgebrochen']
+        }
+        self.update_display()
+        
+    def clear_all(self):
+        """Löscht alle Downloads aus der Liste."""
+        self.downloads = {}
+        self.update_display()
+
+
 # pylint: disable=too-many-ancestors, too-many-instance-attributes
 class EpisodeForm(npyscreen.ActionForm):
     def create(self):
@@ -148,187 +277,211 @@ class EpisodeForm(npyscreen.ActionForm):
             key=lambda x: (x[0] if x[0] > 0 else 999, x[1])
         )
 
-        # Episoden nach Staffeln gruppieren
-        self.seasons_map = {}
-        for season, episode, title, url in sorted_results:
-            if season not in self.seasons_map:
-                self.seasons_map[season] = []
-            self.seasons_map[season].append((episode, title))
+        self._exited = False  # Flag für den Timer
 
-        # Speichern der Original-Infos für jede Episode (Staffel, Episode)
-        self.episode_info = {}
-        for season, episode, title, url in sorted_results:
-            self.episode_info[title] = (season, episode)
+        # Fenstertitel setzen
+        self.name = f"AniWorld Downloader - {anime_season_title}"
 
-        season_episode_map = {
-            title: url for _,
-            _,
-            title,
-            url in sorted_results}
-        self.episode_map = season_episode_map
+        # Erstelle das Layout der Form
+        # Höhe und Breite des Fensters berechnen
+        height, width = self.curses_pad.getmaxyx()
+        logging.debug(f"Terminal Größe: {width}x{height}")
 
-        episode_list = list(self.episode_map.keys())
-        logging.debug("Episode list: %s", episode_list)
+        # Position 1: Linke Spalte (2/3 der Breite)
+        left_width = int(width * 2 / 3) - 2
 
+        # Position 2: Rechte Spalte (1/3 der Breite)
+        right_width = width - left_width - 4
+
+        # Erstelle ein Raster für das Layout
+        self.grid = self.add(npyscreen.GridColTitles)
+        self.grid.hidden = True  # Verstecken, damit es nicht angezeigt wird
+
+        # Anime-Titel und Staffel anzeigen
+        self.add(npyscreen.TitleText, name="Anime:", value=anime_season_title, editable=False)
+
+        # Episode-Liste (linke Spalte)
+        self.episode_selector = self.add(
+            npyscreen.MultiSelect,
+            name="Episoden",
+            max_height=height - 20,
+            max_width=left_width,
+            scroll_exit=True,
+            values=[]
+        )
+
+        # Download-Status-Box (rechte Spalte)
+        self.download_monitor = self.add(
+            DownloadMonitorWidget,
+            name="Download-Fortschritt",
+            max_height=height - 20,
+            max_width=right_width,
+            rely=3,
+            relx=left_width + 3,  # Rechts neben der Episodenliste
+            scroll_exit=True
+        )
+
+        # Selektoren und Optionen (linke Spalte)
+        # Ändere die vertikale Position, damit sie unter der Episodenliste erscheinen
+        rely_position = height - 16
+
+        # Action-Selector
+        self.add(npyscreen.TitleText, name="Aktion:", value="", editable=False, rely=rely_position)
         self.action_selector = self.add(
             npyscreen.TitleSelectOne,
-            name="Action",
+            name="Aktion:",
             values=["Watch", "Download", "Syncplay"],
+            value=[1],  # "Download" als Standard
             max_height=4,
-            value=[["Watch", "Download", "Syncplay"].index(aniworld_globals.DEFAULT_ACTION)],
-            scroll_exit=True
+            scroll_exit=True,
+            rely=rely_position
         )
-        logging.debug("Action selector created")
 
-        self.aniskip_selector = self.add(
-            npyscreen.TitleSelectOne,
-            name="Aniskip",
-            values=["Enable", "Disable"],
-            max_height=3,
-            value=[0 if aniworld_globals.DEFAULT_ANISKIP else 1],
-            scroll_exit=True
+        # Language-Selector
+        self.add(
+            npyscreen.TitleText,
+            name="Sprache:",
+            value="",
+            editable=False,
+            rely=rely_position + 4
         )
-        logging.debug("Aniskip selector created")
-
-        self.directory_field = self.add(
-            npyscreen.TitleFilenameCombo,
-            name="Directory:",
-            value=aniworld_globals.DEFAULT_DOWNLOAD_PATH
-        )
-        logging.debug("Directory field created")
-
         self.language_selector = self.add(
             npyscreen.TitleSelectOne,
-            name="Language",
+            name="Sprache:",
             values=["German Dub", "English Sub", "German Sub"],
+            value=[0],  # "German Dub" als Standard
             max_height=4,
-            value=[
-                ["German Dub", "English Sub", "German Sub"].index(
-                    aniworld_globals.DEFAULT_LANGUAGE
-                )
-            ],
-            scroll_exit=True
+            scroll_exit=True,
+            rely=rely_position + 4
         )
-        logging.debug("Language selector created")
 
-        # Event-Handler für Sprachänderung hinzufügen
-        self.language_selector.when_value_edited = self.filter_episodes_by_language
-
+        # Provider-Selector
+        self.add(
+            npyscreen.TitleText,
+            name="Provider:",
+            value="",
+            editable=False,
+            rely=rely_position + 8
+        )
         self.provider_selector = self.add(
             npyscreen.TitleSelectOne,
-            name="Provider",
-            values=[
-                "VOE",
-                "Vidmoly",
-                "Doodstream",
-                "SpeedFiles",
-                "Vidoza"
-            ],
-            max_height=6,
-            value=[
-                [
-                    "VOE",
-                    "Vidmoly",
-                    "Doodstream",
-                    "SpeedFiles",
-                    "Vidoza"
-                ].index(aniworld_globals.DEFAULT_PROVIDER)
-            ],
-            scroll_exit=True
+            name="Provider:",
+            values=PROVIDER_PRIORITY,
+            value=[0],  # Erster Provider als Standard
+            max_height=len(PROVIDER_PRIORITY) + 1,
+            scroll_exit=True,
+            rely=rely_position + 8
         )
 
-        logging.debug("Provider selector created")
-
-        # Tor-Kontrollbereich hinzufügen
-        self.tor_label = self.add(
-            npyscreen.TitleFixedText,
-            name="Tor-Netzwerk:",
-            value="Initialisiere...",
-            editable=False
-        )
-
-        self.tor_selector = self.add(
-            npyscreen.TitleSelectOne,
-            name="Tor Status:",
-            values=["Aktivieren", "Deaktivieren"],
-            max_height=3,
-            value=[0 if aniworld_globals.USE_TOR else 1],
-            scroll_exit=True
-        )
-
-        # Event-Handler für Tor-Status-Änderung
-        self.tor_selector.when_value_edited = self.update_tor_status
-
-        self.tor_ip_text = self.add(
-            npyscreen.TitleFixedText,
-            name="Aktuelle IP:",
-            value="Wird abgerufen...",
-            editable=False
-        )
-
-        self.tor_identity_button = self.add(
-            npyscreen.ButtonPress,
-            name="Neue Tor-Identität anfordern",
-            when_pressed_function=self.request_new_tor_identity,
-            max_height=1,
-            scroll_exit=True
-        )
-
-        # Status-Text für Benachrichtigungen hinzufügen
-        self.status_text = self.add(
-            npyscreen.TitleFixedText,
-            name="Status:",
+        # Directory-Feld
+        self.add(
+            npyscreen.TitleText,
+            name="Verzeichnis:",
             value="",
-            editable=False
+            editable=False,
+            rely=rely_position + 8 + len(PROVIDER_PRIORITY) + 1
+        )
+        self.directory_field = self.add(
+            npyscreen.TitleText,
+            name="Verzeichnis:",
+            value=DEFAULT_DOWNLOAD_PATH,
+            editable=True,
+            rely=rely_position + 8 + len(PROVIDER_PRIORITY) + 1
         )
 
-        self.episode_selector = self.add(
-            npyscreen.TitleMultiSelect,
-            name="Episode Selection",
-            values=episode_list,
-            max_height=6,
-            scroll_exit=True
+        # AniskipSelector
+        self.add(
+            npyscreen.TitleText,
+            name="Aniskip:",
+            value="",
+            editable=False,
+            hidden=True,
+            rely=rely_position + 8 + len(PROVIDER_PRIORITY) + 3
         )
-        logging.debug(
-            "Episode selector created with %s episodes",
-            len(episode_list))
+        self.aniskip_selector = self.add(
+            npyscreen.TitleSelectOne,
+            name="Aniskip:",
+            values=["Enable", "Disable"],
+            value=[0],  # "Enable" als Standard
+            max_height=3,
+            hidden=True,
+            scroll_exit=True,
+            rely=rely_position + 8 + len(PROVIDER_PRIORITY) + 3
+        )
 
-        # Dropdown für Staffelauswahl
+        # Statustext am unteren Rand
+        self.status_text = self.add(
+            npyscreen.MultiLine,
+            name="Status:",
+            values=["Bereit."],
+            max_height=3,
+            editable=False,
+            rely=height - 6
+        )
+
+        # Season Selector hinzufügen (für Staffelauswahl)
         self.season_selector = self.add(
             npyscreen.TitleSelectOne,
-            name="Staffel auswählen:",
-            values=[
-                "Staffel " +
-                str(season) if season > 0 else "Filme" for season in sorted(
-                    self.seasons_map.keys())],
-            max_height=4,
-            scroll_exit=True)
-
-        # Button zum Markieren vorhandener Episoden
-        self.mark_existing_button = self.add(
-            npyscreen.ButtonPress,
-            name="Vorhandene Episoden markieren",
-            max_height=1,
-            when_pressed_function=self.mark_existing_episodes,
-            scroll_exit=True
+            name="Staffel:",
+            values=["Alle"],
+            value=[0],
+            max_height=3,
+            scroll_exit=True,
+            rely=rely_position + 13 + len(PROVIDER_PRIORITY)
         )
 
-        # Button zum Filtern und Anzeigen nur fehlender Episoden
-        self.filter_missing_button = self.add(
+        self.seasons_map = {}  # Map für den schnellen Zugriff auf Staffeln
+        self.episode_info = {}  # Map für den schnellen Zugriff auf Episoden-Infos
+        self.episode_map = {}  # Map für den schnellen Zugriff auf Episode URLs
+
+        # Zur Anzeige der Tor-IP
+        self.tor_ip = self.add(
+            npyscreen.TitleText,
+            name="Tor Status:",
+            value="Nicht verwendet",
+            relx=left_width + 3,
+            rely=height - 12,
+            max_width=right_width,
+            editable=False
+        )
+
+        # Für alle Ergebnisse die Staffel- und Episodeninformationen speichern
+        for season, episode, title, url in sorted_results:
+            self.episode_info[title] = (season, episode)
+            self.episode_map[title] = url
+
+        # Liste aktualisieren
+        self.episode_selector.values = [
+            result[2] for result in sorted_results
+        ]
+
+        # Die Original-Episodenliste für spätere Filterung speichern
+        self.original_episode_list = self.episode_selector.values.copy()
+
+        # Initial die seasons_map aktualisieren
+        self.update_season_maps()
+
+        # Buttons für Aktionen
+        # Button zum Anzeigen nur fehlender Episoden
+        self.missing_button = self.add(
             npyscreen.ButtonPress,
             name="Nur fehlende Episoden anzeigen",
             max_height=1,
             when_pressed_function=self.show_only_missing_episodes,
-            scroll_exit=True
+            scroll_exit=True,
+            relx=left_width + 3,
+            rely=height - 10
         )
 
-        # Button zum Auswählen aller fehlenden Episoden
-        self.select_missing_button = self.add(
+        # Button zum Auswählen fehlender Episoden
+        self.missing_select_button = self.add(
             npyscreen.ButtonPress,
             name="Alle fehlenden Episoden auswählen",
             max_height=1,
             when_pressed_function=self.select_all_missing_episodes,
-            scroll_exit=True
+            scroll_exit=True,
+            relx=left_width + 3,
+            rely=height - 9
         )
 
         # Button zum Auswählen aller Episoden einer Staffel
@@ -337,7 +490,9 @@ class EpisodeForm(npyscreen.ActionForm):
             name="Alle Episoden dieser Staffel auswählen",
             max_height=1,
             when_pressed_function=self.select_season_episodes,
-            scroll_exit=True
+            scroll_exit=True,
+            relx=left_width + 3,
+            rely=height - 8
         )
 
         # Button zum Auswählen aller Episoden hinzufügen
@@ -346,7 +501,20 @@ class EpisodeForm(npyscreen.ActionForm):
             name="Alle Episoden auswählen",
             max_height=1,
             when_pressed_function=self.select_all_episodes,
-            scroll_exit=True
+            scroll_exit=True,
+            relx=left_width + 3,
+            rely=height - 7
+        )
+
+        # Button zum Löschen abgeschlossener Downloads
+        self.clear_downloads_button = self.add(
+            npyscreen.ButtonPress,
+            name="Abgeschlossene Downloads löschen",
+            max_height=1,
+            when_pressed_function=lambda: self.download_monitor.clear_completed(),
+            scroll_exit=True,
+            relx=left_width + 3,
+            rely=height - 14
         )
 
         self.display_text = False
@@ -359,22 +527,30 @@ class EpisodeForm(npyscreen.ActionForm):
             name="Description",
             max_height=1,
             when_pressed_function=self.go_to_second_form,
-            scroll_exit=True
+            scroll_exit=True,
+            relx=left_width + 3,
+            rely=height - 16
         )
 
         self.action_selector.when_value_edited = self.update_directory_visibility
         logging.debug(
             "Set update_directory_visibility as callback for action_selector")
 
-        # Original-Episode-Liste und Map speichern für Filteroperationen
-        self.original_episode_list = episode_list.copy()
-        self.original_episode_map = self.episode_map.copy()
-
-        # Initialisiere Tor-Info und starte regelmäßige Updates
-        self.update_tor_info()
-        self.start_tor_info_update_timer()
-
-        self.display()
+        # Bei Nutzung von Tor, Tor-Info aktualisieren
+        if USE_TOR:
+            self.update_tor_status()
+            # Button für neue Tor-Identität hinzufügen
+            self.new_identity_button = self.add(
+                npyscreen.ButtonPress,
+                name="Neue Tor-Identität",
+                max_height=1,
+                when_pressed_function=self.request_new_tor_identity,
+                scroll_exit=True,
+                relx=left_width + 3,
+                rely=height - 15
+            )
+            # Timer für Aktualisierung der Tor-IP starten
+            self.start_tor_info_update_timer()
 
     def setup_signal_handling(self):
         def signal_handler(_signal_number, _frame):
@@ -544,14 +720,73 @@ class EpisodeForm(npyscreen.ActionForm):
 
     def __execute_and_exit(self, params):
         try:
-            execute_with_params(params)
-            # Fügen Sie eine Status-Aktualisierung hinzu
-            episode_title = params.get(
-                'anime_title', '') + ' - ' + os.path.basename(params.get('episode_url', ''))
-            self.status_text.value = f"Download abgeschlossen: {episode_title}"
+            # Episoden-Informationen für die Anzeige extrahieren
+            episode_url = params.get('episode_url', '')
+            anime_title = params.get('anime_title', '')
+            
+            # Staffel- und Episodennummer aus der URL extrahieren
+            season, episode = get_season_and_episode_numbers(episode_url)
+            display_title = f"{anime_title} - S{season:02d}E{episode:02d}"
+            language = params.get('language', 'Unknown')
+            
+            # Download im Monitor registrieren
+            download_id = self.download_monitor.add_download(display_title, episode_url)
+            
+            # Status auf "Lädt..." setzen
+            self.download_monitor.update_download(download_id, status='Lädt...')
+            
+            # Hauptstatus aktualisieren
+            self.status_text.value = f"Starte Download: {display_title}"
             self.display()
+            
+            # Download starten
+            result = execute(params)
+            
+            if result:  # Fehler aufgetreten
+                error_msg = result.get("message", "Unbekannter Fehler")
+                
+                if "keine Streams verfügbar" in error_msg.lower() and result.get("available_languages", []):
+                    langs_str = ", ".join(result.get("available_languages", []))
+                    error_msg = f"Keine Streams für {language} verfügbar. Verfügbar: {langs_str}"
+                    
+                # Status im Monitor aktualisieren
+                self.download_monitor.update_download(download_id, status=f"Fehler: {error_msg}")
+                
+                # Fehlermeldung im TUI anzeigen
+                npyscreen.notify_confirm(
+                    error_msg,
+                    title="Fehler bei der Ausführung",
+                    form_color="DANGER",
+                    wrap=True,
+                    wide=True
+                )
+                
+                # Hauptstatus aktualisieren
+                self.status_text.value = f"Fehler: {error_msg}"
+            else:
+                # Prüfen, ob die Datei existiert, um zu bestätigen, dass der Download erfolgreich war
+                if params.get('action_selected') == 'Download':
+                    # Status im Monitor aktualisieren
+                    self.download_monitor.update_download(download_id, status='Abgeschlossen')
+                    
+                    # Hauptstatus aktualisieren
+                    self.status_text.value = f"Download abgeschlossen: {display_title}"
+                else:
+                    # Status im Monitor aktualisieren (für "Watch" oder "Syncplay")
+                    self.download_monitor.update_download(download_id, status='Angeschaut')
+                    
+                    # Hauptstatus aktualisieren
+                    self.status_text.value = f"Erfolgreich ausgeführt: {display_title}"
+            
+            self.display()
+            
         except Exception as e:
             logging.exception(f"Fehler beim Ausführen der Episode: {e}")
+            
+            # Status im Monitor aktualisieren
+            if download_id:
+                self.download_monitor.update_download(download_id, status=f"Fehler: {str(e)}")
+            
             # Zeige Fehler im TUI an
             npyscreen.notify_confirm(
                 f"Fehler beim Ausführen der Episode: {str(e)}",
@@ -559,11 +794,10 @@ class EpisodeForm(npyscreen.ActionForm):
                 form_color="DANGER",
                 wrap=True
             )
+            
             # Status aktualisieren
             self.status_text.value = f"Fehler: {str(e)}"
             self.display()
-        # Die 'finally' Klausel mit self.parentApp.switchForm(None) wurde entfernt,
-        # damit die Anwendung nach dem Download nicht beendet wird
 
     def get_language_code(self, language):
         logging.debug("Getting language code for: %s", language)
@@ -1179,216 +1413,143 @@ class EpisodeForm(npyscreen.ActionForm):
         self.display()
 
     def update_tor_status(self):
-        """Aktualisiert den Tor-Status basierend auf der UI-Auswahl."""
-        new_tor_index = self.tor_selector.value[0] if self.tor_selector.value else 0
-        new_tor_status = new_tor_index == 0  # 0 = Aktivieren, 1 = Deaktivieren
-
-        if new_tor_status != aniworld_globals.USE_TOR:
-            self.status_text.value = f"Tor-Status wird auf {
-                'aktiviert' if new_tor_status else 'deaktiviert'} gesetzt..."
+        """Aktualisiert den Tor-Status basierend auf der Benutzerauswahl"""
+        logging.debug("Updating Tor status")
+        
+        try:
+            # Setze den globalen Tor-Status
+            aniworld_globals.USE_TOR = True
+            
+            # Aktualisiere die Tor-IP-Anzeige
+            self.update_tor_info()
+            
+            # Status-Nachricht aktualisieren
+            self.status_text.value = "Tor-Netzwerk aktiviert. Neue Verbindungen werden über Tor geroutet."
             self.display()
-
-            try:
-                # Tor-Client aktualisieren
-                from aniworld.common import get_tor_version, is_tor_running
-                from aniworld.common.tor_client import get_tor_client
-
-                # Prüfe, ob Tor installiert ist
-                if new_tor_status and get_tor_version() == "nicht installiert":
-                    self.status_text.value = "Tor ist nicht installiert. Bitte installieren Sie Tor, bevor Sie es aktivieren."
-                    self.tor_selector.value = [1]  # Deaktivieren erzwingen
-                    self.display()
-                    return
-
-                # Setze globale Variable
-                aniworld_globals.USE_TOR = new_tor_status
-                os.environ['USE_TOR'] = 'True' if new_tor_status else 'False'
-
-                # Hole oder initialisiere Tor-Client mit neuem Status
-                tor_client = get_tor_client(use_tor=new_tor_status)
-
-                if new_tor_status:
-                    # Starte Tor, wenn aktiviert
-                    self.status_text.value = "Tor wird gestartet..."
-                    self.display()
-
-                    # Versuche mehrmals zu starten (max. 3 Versuche)
-                    max_attempts = 3
-                    success = False
-
-                    for attempt in range(max_attempts):
-                        if attempt > 0:
-                            self.status_text.value = f"Tor-Startversuch {
-                                attempt + 1}/{max_attempts}..."
-                            self.display()
-
-                        if tor_client.start():
-                            success = True
-                            break
-                        else:
-                            # Warte kurz vor dem nächsten Versuch
-                            time.sleep(1)
-
-                    if success:
-                        # Überprüfe durch eine separate Systemprüfung
-                        if is_tor_running():
-                            self.status_text.value = "Tor wurde erfolgreich aktiviert"
-                        else:
-                            self.status_text.value = "Tor wurde gestartet, aber der Dienst scheint nicht zu laufen. Bitte prüfen Sie Ihre Installation."
-                    else:
-                        self.status_text.value = "Fehler beim Starten von Tor nach mehreren Versuchen"
-                        # Setze den Status zurück, wenn es nicht gestartet
-                        # werden konnte
-                        aniworld_globals.USE_TOR = False
-                        os.environ['USE_TOR'] = 'False'
-                        self.tor_selector.value = [1]  # Deaktivieren
-                else:
-                    # Stoppe Tor, wenn deaktiviert
-                    self.status_text.value = "Tor wird gestoppt..."
-                    self.display()
-
-                    tor_client.stop()
-                    self.status_text.value = "Tor wurde deaktiviert"
-
-                # UI aktualisieren
-                self.update_tor_info()
-
-            except ImportError:
-                self.status_text.value = "Tor-Unterstützung ist nicht verfügbar. Bitte installieren Sie die erforderlichen Module (stem, PySocks)."
-            except Exception as e:
-                self.status_text.value = f"Fehler bei Tor-Aktivierung: {
-                    str(e)}"
-                # Fehler-Logging für die Diagnose
-                import traceback
-                logging.error(f"Tor-Aktivierungsfehler: {str(e)}")
-                logging.debug(f"Traceback: {traceback.format_exc()}")
-
-            # UI-Elemente aktualisieren
-            self.tor_selector.value = [0 if aniworld_globals.USE_TOR else 1]
+        except Exception as e:
+            logging.error(f"Fehler beim Aktualisieren des Tor-Status: {e}")
+            self.status_text.value = f"Fehler beim Aktualisieren des Tor-Status: {e}"
             self.display()
 
     def request_new_tor_identity(self):
-        """Fordert eine neue Tor-Identität an."""
-        if not aniworld_globals.USE_TOR:
-            self.status_text.value = "Tor ist nicht aktiviert. Bitte aktivieren Sie Tor zuerst."
-            self.display()
-            return
-
+        """Fordert eine neue Tor-Identität an"""
+        logging.debug("Requesting new Tor identity")
+        
         try:
+            # Tor-Client importieren
             from aniworld.common.tor_client import get_tor_client
-
-            self.status_text.value = "Neue Tor-Identität wird angefordert..."
-            self.display()
-
+            
+            # Tor-Client initialisieren
             tor_client = get_tor_client(use_tor=True)
-            if tor_client.new_identity():
-                self.status_text.value = "Neue Tor-Identität erfolgreich angefordert"
+            
+            if tor_client:
+                # Neue Identität anfordern
+                tor_client.new_identity()
+                
+                # Status-Nachricht aktualisieren
+                self.status_text.value = "Neue Tor-Identität angefordert. IP wird aktualisiert..."
+                self.display()
+                
+                # Tor-IP aktualisieren
+                self.update_tor_info()
             else:
-                self.status_text.value = "Fehler beim Anfordern einer neuen Tor-Identität"
-
-            # IP-Adresse aktualisieren
-            self.update_tor_info()
-
-        except ImportError:
-            self.status_text.value = "Tor-Unterstützung ist nicht verfügbar. Bitte installieren Sie die erforderlichen Module (stem, PySocks)."
+                # Fehlermeldung anzeigen
+                self.status_text.value = "Tor-Client konnte nicht initialisiert werden."
+                self.display()
         except Exception as e:
-            self.status_text.value = f"Fehler beim Anfordern einer neuen Tor-Identität: {
-                str(e)}"
-
-        self.display()
+            logging.error(f"Fehler beim Anfordern einer neuen Tor-Identität: {e}")
+            self.status_text.value = f"Fehler beim Anfordern einer neuen Tor-Identität: {e}"
+            self.display()
 
     def update_tor_info(self):
-        """Aktualisiert die Tor-Informationen in der UI."""
-        # Status-Text aktualisieren
-        self.tor_label.value = f"{
-            'Aktiv' if aniworld_globals.USE_TOR else 'Inaktiv'} - Tor {
-            get_tor_version()}"
-
-        # IP-Adresse aktualisieren
-        if aniworld_globals.USE_TOR:
-            try:
-                from aniworld.common import is_tor_running
-                from aniworld.common.tor_client import get_tor_client
-
-                # Prüfen, ob Tor-Dienst tatsächlich läuft
-                if not is_tor_running():
-                    self.tor_ip_text.value = "Tor-Dienst läuft nicht. Bitte starte Tor neu."
-                    self.display()
-                    return
-
-                # Thread für IP-Abfrage starten, um UI nicht zu blockieren
-                def update_ip_thread():
-                    try:
-                        tor_client = get_tor_client(use_tor=True)
-
-                        # Überprüfe, ob der Tor-Client wirklich läuft
-                        if not tor_client.is_running:
-                            def update_ui_error():
-                                self.tor_ip_text.value = "Tor-Client läuft nicht. Status wird korrigiert..."
+        """Aktualisiert die Tor-IP-Anzeige"""
+        logging.debug("Updating Tor IP info")
+        
+        if not aniworld_globals.USE_TOR:
+            self.tor_ip.value = "Tor ist deaktiviert"
+            self.display()
+            return
+        
+        try:
+            # Status-Nachricht aktualisieren
+            self.tor_ip.value = "Tor aktiv, rufe IP ab..."
+            self.display()
+            
+            # Thread für das Abrufen der IP starten
+            def update_ip_thread():
+                try:
+                    # Tor-Client importieren
+                    from aniworld.common.tor_client import get_tor_client
+                    
+                    # Tor-Client initialisieren
+                    tor_client = get_tor_client(use_tor=True)
+                    
+                    if tor_client:
+                        # IP abrufen
+                        ip_info = tor_client.get_ip_info()
+                        
+                        if ip_info:
+                            ip = ip_info.get('ip', 'Unbekannt')
+                            country = ip_info.get('country', 'Unbekannt')
+                            
+                            def update_ui():
+                                self.tor_ip.value = f"Tor aktiv - IP: {ip} ({country})"
                                 self.display()
-                                # Starte Tor, falls globale Variable sagt, dass
-                                # es laufen sollte
-                                tor_client.start()
-
-                            if hasattr(
-                                    self, 'parentApp') and hasattr(
-                                    self.parentApp, '_Forms'):
-                                npyscreen.globals.MAINLOOP.schedule_task_in_main_thread(
-                                    update_ui_error)
-                            return
-
-                        # IP-Adresse abrufen
-                        ip = tor_client.get_current_ip()
-
-                        # UI-Update in Hauptthread durchführen
-                        def update_ui():
-                            if ip:
-                                self.tor_ip_text.value = ip
-                            else:
-                                self.tor_ip_text.value = "IP-Adresse konnte nicht abgerufen werden. Tor möglicherweise nicht korrekt konfiguriert."
+                            
+                            # UI-Update im Hauptthread
+                            npyscreen.notify_wait(update_ui)
+                        else:
+                            def update_ui_error():
+                                self.tor_ip.value = "Tor aktiv - IP konnte nicht abgerufen werden"
+                                self.display()
+                            
+                            # UI-Update im Hauptthread
+                            npyscreen.notify_wait(update_ui_error)
+                    else:
+                        def update_ui_error():
+                            self.tor_ip.value = "Tor-Client konnte nicht initialisiert werden"
                             self.display()
-
-                        # UI-Update ausführen
-                        if hasattr(
-                                self, 'parentApp') and hasattr(
-                                self.parentApp, '_Forms'):
-                            npyscreen.globals.MAINLOOP.schedule_task_in_main_thread(
-                                update_ui)
-                    except Exception as e:
-                        logging.error(
-                            f"Fehler beim Abrufen der IP-Adresse: {str(e)}")
-                        import traceback
-                        logging.debug(f"Traceback: {traceback.format_exc()}")
-
-                # Thread starten
-                threading.Thread(target=update_ip_thread, daemon=True).start()
-
-            except ImportError:
-                self.tor_ip_text.value = "Tor-Module nicht verfügbar"
-        else:
-            self.tor_ip_text.value = "Tor ist deaktiviert"
-
-        # UI aktualisieren
-        self.display()
+                        
+                        # UI-Update im Hauptthread
+                        npyscreen.notify_wait(update_ui_error)
+                except Exception as e:
+                    logging.error(f"Fehler beim Abrufen der Tor-IP: {e}")
+                    
+                    def update_ui_error():
+                        self.tor_ip.value = f"Fehler: {str(e)}"
+                        self.display()
+                    
+                    # UI-Update im Hauptthread
+                    npyscreen.notify_wait(update_ui_error)
+            
+            # Thread starten
+            threading.Thread(target=update_ip_thread, daemon=True).start()
+        except Exception as e:
+            logging.error(f"Fehler beim Aktualisieren der Tor-Info: {e}")
+            self.tor_ip.value = f"Fehler: {str(e)}"
+            self.display()
 
     def start_tor_info_update_timer(self):
-        """Startet einen Timer für regelmäßige Updates der Tor-Informationen."""
+        """Startet einen Timer für die regelmäßige Aktualisierung der Tor-IP"""
+        
         def update_tor_info_timer():
-            while not getattr(self, '_exited', False):
+            """Aktualisiert die Tor-IP und plant den nächsten Timer"""
+            if not self._exited:  # Wenn das Formular noch aktiv ist
                 try:
-                    # Aktualisiere Tor-Infos alle 30 Sekunden
+                    # Tor-IP aktualisieren
                     self.update_tor_info()
+                    
+                    # Nächsten Timer planen
+                    self.timer = threading.Timer(60, update_tor_info_timer)
+                    self.timer.daemon = True
+                    self.timer.start()
                 except Exception as e:
-                    logging.error(
-                        f"Fehler bei regelmäßigem Tor-Info-Update: {str(e)}")
-                finally:
-                    # Warte 30 Sekunden bis zum nächsten Update
-                    time.sleep(30)
-
-        # Starte Background-Thread für Updates
-        self.tor_info_thread = threading.Thread(
-            target=update_tor_info_timer, daemon=True)
-        self.tor_info_thread.start()
+                    logging.error(f"Fehler beim Timer für Tor-Info-Update: {e}")
+        
+        # Ersten Timer starten
+        self.timer = threading.Timer(60, update_tor_info_timer)
+        self.timer.daemon = True
+        self.timer.start()
 
 
 # pylint: disable=R0901
