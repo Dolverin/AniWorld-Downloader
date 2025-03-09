@@ -618,63 +618,29 @@ class EpisodeForm(npyscreen.ActionForm):
             
             for title, is_available in availability_results.items():
                 if is_available:
-                    # Überprüfe, ob der Titel bereits markiert ist
-                    if title in self.original_episode_list:
-                        # Behalt die Markierung bei, wenn vorhanden
-                        original_idx = self.original_episode_list.index(title)
-                        original_title = self.original_episode_list[original_idx]
-                        filtered_episodes.append(original_title)
-                    else:
-                        filtered_episodes.append(title)
-                    filtered_map[title] = self.original_episode_map[title]
-            
-            # Prüfen, ob Markierungen vorhanden sind, falls nicht, führe mark_existing_episodes aus
-            if not hasattr(self, 'existing_episodes') or len(self.existing_episodes) == 0:
-                # Speichere die gefilterten Episoden temporär
-                temp_episodes = filtered_episodes.copy()
-                temp_map = filtered_map.copy()
-                
-                # Setze die ursprünglichen Werte zurück, damit mark_existing_episodes korrekt arbeitet
-                self.episode_selector.values = filtered_episodes
-                self.episode_map = filtered_map
-                
-                # Markiere existierende Episoden
-                self.mark_existing_episodes()
-                
-                # Nach mark_existing_episodes sind die Werte bereits aktualisiert
-                filtered_episodes = self.episode_selector.values
-                filtered_map = self.episode_map
-            else:
-                # Wenn bereits markiert, aktualisiere die Episodenliste und behalte Markierungen bei
-                marked_episodes = []
-                for title in filtered_episodes:
+                    # Übernehme die Titel ohne Markierungen
                     stripped_title = title
-                    # Entferne vorhandene Markierungen
                     if title.startswith("[✓] ") or title.startswith("[✗] "):
                         stripped_title = title[4:]
                     
-                    # Finde den Originalindex in der Liste
-                    found = False
-                    for i, orig_title in enumerate(self.episode_selector.values):
-                        orig_stripped = orig_title
-                        if orig_title.startswith("[✓] ") or orig_title.startswith("[✗] "):
-                            orig_stripped = orig_title[4:]
-                        
-                        if stripped_title == orig_stripped:
-                            # Übernehme die Markierung
-                            marked_episodes.append(orig_title)
-                            found = True
-                            break
-                    
-                    # Wenn nicht gefunden, füge ohne Markierung hinzu
-                    if not found:
-                        marked_episodes.append(stripped_title)
-                
-                filtered_episodes = marked_episodes
+                    filtered_episodes.append(stripped_title)
+                    filtered_map[stripped_title] = self.original_episode_map[title if title in self.original_episode_map else stripped_title]
             
-            # Episodenliste aktualisieren
+            # Aktualisiere die Episodenliste ohne Markierungen
             self.episode_selector.values = filtered_episodes
             self.episode_map = filtered_map
+            
+            # Aktualisiere die Markierungen für die ausgewählte Sprache
+            # Setze existing_episodes zurück
+            self.existing_episodes = []
+            
+            # Markiere die Episoden für die aktuelle Sprache
+            if filtered_episodes:
+                self.mark_existing_episodes()
+                
+                # Nach mark_existing_episodes sind die Werte bereits aktualisiert mit den korrekten Markierungen
+                filtered_episodes = self.episode_selector.values
+                filtered_map = self.episode_map
             
             # Season-Maps aktualisieren
             self.update_season_maps()
