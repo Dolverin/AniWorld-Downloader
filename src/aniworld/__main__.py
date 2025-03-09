@@ -286,271 +286,416 @@ class EpisodeForm(npyscreen.ActionForm):
         # Höhe und Breite des Fensters berechnen
         height, width = self.curses_pad.getmaxyx()
         logging.debug(f"Terminal Größe: {width}x{height}")
-
-        # Position 1: Linke Spalte (2/3 der Breite)
-        left_width = int(width * 2 / 3) - 2
-
-        # Position 2: Rechte Spalte (1/3 der Breite)
-        right_width = width - left_width - 4
-
-        # Erstelle ein Raster für das Layout
-        self.grid = self.add(npyscreen.GridColTitles)
-        self.grid.hidden = True  # Verstecken, damit es nicht angezeigt wird
-
-        # Anime-Titel und Staffel anzeigen
-        self.add(npyscreen.TitleText, name="Anime:", value=anime_season_title, editable=False)
-
-        # Episode-Liste (linke Spalte)
-        self.episode_selector = self.add(
-            npyscreen.MultiSelect,
-            name="Episoden",
-            max_height=height - 20,
-            max_width=left_width,
-            scroll_exit=True,
-            values=[]
-        )
-
-        # Download-Status-Box (rechte Spalte)
-        self.download_monitor = self.add(
-            DownloadMonitorWidget,
-            name="Download-Fortschritt",
-            max_height=height - 20,
-            max_width=right_width,
-            rely=3,
-            relx=left_width + 3,  # Rechts neben der Episodenliste
-            scroll_exit=True
-        )
-
-        # Selektoren und Optionen (linke Spalte)
-        # Ändere die vertikale Position, damit sie unter der Episodenliste erscheinen
-        rely_position = height - 16
-
-        # Action-Selector
-        self.add(npyscreen.TitleText, name="Aktion:", value="", editable=False, rely=rely_position)
-        self.action_selector = self.add(
-            npyscreen.TitleSelectOne,
-            name="Aktion:",
-            values=["Watch", "Download", "Syncplay"],
-            value=[1],  # "Download" als Standard
-            max_height=4,
-            scroll_exit=True,
-            rely=rely_position
-        )
-
-        # Language-Selector
-        self.add(
-            npyscreen.TitleText,
-            name="Sprache:",
-            value="",
-            editable=False,
-            rely=rely_position + 4
-        )
-        self.language_selector = self.add(
-            npyscreen.TitleSelectOne,
-            name="Sprache:",
-            values=["German Dub", "English Sub", "German Sub"],
-            value=[0],  # "German Dub" als Standard
-            max_height=4,
-            scroll_exit=True,
-            rely=rely_position + 4
-        )
-
-        # Provider-Selector
-        self.add(
-            npyscreen.TitleText,
-            name="Provider:",
-            value="",
-            editable=False,
-            rely=rely_position + 8
-        )
-        self.provider_selector = self.add(
-            npyscreen.TitleSelectOne,
-            name="Provider:",
-            values=PROVIDER_PRIORITY,
-            value=[0],  # Erster Provider als Standard
-            max_height=len(PROVIDER_PRIORITY) + 1,
-            scroll_exit=True,
-            rely=rely_position + 8
-        )
-
-        # Directory-Feld
-        self.add(
-            npyscreen.TitleText,
-            name="Verzeichnis:",
-            value="",
-            editable=False,
-            rely=rely_position + 8 + len(PROVIDER_PRIORITY) + 1
-        )
-        self.directory_field = self.add(
-            npyscreen.TitleText,
-            name="Verzeichnis:",
-            value=DEFAULT_DOWNLOAD_PATH,
-            editable=True,
-            rely=rely_position + 8 + len(PROVIDER_PRIORITY) + 1
-        )
-
-        # AniskipSelector
-        self.add(
-            npyscreen.TitleText,
-            name="Aniskip:",
-            value="",
-            editable=False,
-            hidden=True,
-            rely=rely_position + 8 + len(PROVIDER_PRIORITY) + 3
-        )
-        self.aniskip_selector = self.add(
-            npyscreen.TitleSelectOne,
-            name="Aniskip:",
-            values=["Enable", "Disable"],
-            value=[0],  # "Enable" als Standard
-            max_height=3,
-            hidden=True,
-            scroll_exit=True,
-            rely=rely_position + 8 + len(PROVIDER_PRIORITY) + 3
-        )
-
-        # Statustext am unteren Rand
-        self.status_text = self.add(
-            npyscreen.MultiLine,
-            name="Status:",
-            values=["Bereit."],
-            max_height=3,
-            editable=False,
-            rely=height - 6
-        )
-
-        # Season Selector hinzufügen (für Staffelauswahl)
-        self.season_selector = self.add(
-            npyscreen.TitleSelectOne,
-            name="Staffel:",
-            values=["Alle"],
-            value=[0],
-            max_height=3,
-            scroll_exit=True,
-            rely=rely_position + 13 + len(PROVIDER_PRIORITY)
-        )
-
-        self.seasons_map = {}  # Map für den schnellen Zugriff auf Staffeln
-        self.episode_info = {}  # Map für den schnellen Zugriff auf Episoden-Infos
-        self.episode_map = {}  # Map für den schnellen Zugriff auf Episode URLs
-
-        # Zur Anzeige der Tor-IP
-        self.tor_ip = self.add(
-            npyscreen.TitleText,
-            name="Tor Status:",
-            value="Nicht verwendet",
-            relx=left_width + 3,
-            rely=height - 12,
-            max_width=right_width,
-            editable=False
-        )
-
+        
+        # Mindestfenstergröße prüfen und gegebenenfalls anpassen
+        MIN_WIDTH = 80
+        MIN_HEIGHT = 24
+        
+        if width < MIN_WIDTH or height < MIN_HEIGHT:
+            # Wenn das Fenster zu klein ist, erstellen wir ein einfacheres Layout
+            logging.warning(f"Terminal zu klein: {width}x{height}, benötigt mindestens {MIN_WIDTH}x{MIN_HEIGHT}")
+            self.use_simple_layout = True
+            
+            # Einfacher Animetitel ohne Aufteilung
+            self.add(npyscreen.TitleText, name="Anime:", value=anime_season_title, editable=False)
+            
+            # Einfache Episode-Liste ohne Split-View
+            self.episode_selector = self.add(
+                npyscreen.MultiSelect,
+                name="Episoden",
+                max_height=height - 16,  # Weniger Platz reservieren für andere Elemente
+                scroll_exit=True,
+                values=[]
+            )
+            
+            # Vereinfachte Steuerelemente
+            self.download_monitor = None  # Kein Download-Monitor in einfachem Layout
+            
+            # Basispositionen für Steuerelemente
+            rely_position = height - 14
+            
+            # Action-Selector
+            self.add(npyscreen.TitleText, name="Aktion:", value="", editable=False, rely=rely_position)
+            self.action_selector = self.add(
+                npyscreen.TitleSelectOne,
+                name="Aktion:",
+                values=["Watch", "Download", "Syncplay"],
+                value=[1],  # "Download" als Standard
+                max_height=4,
+                scroll_exit=True,
+                rely=rely_position
+            )
+            
+            # Language-Selector
+            self.add(
+                npyscreen.TitleText,
+                name="Sprache:",
+                value="",
+                editable=False,
+                rely=rely_position + 4
+            )
+            self.language_selector = self.add(
+                npyscreen.TitleSelectOne,
+                name="Sprache:",
+                values=["German Dub", "English Sub", "German Sub"],
+                value=[0],  # "German Dub" als Standard
+                max_height=4,
+                scroll_exit=True,
+                rely=rely_position + 4
+            )
+            
+            # Provider-Selector (vereinfacht)
+            self.add(
+                npyscreen.TitleText,
+                name="Provider:",
+                value="",
+                editable=False,
+                rely=rely_position + 8
+            )
+            self.provider_selector = self.add(
+                npyscreen.TitleSelectOne,
+                name="Provider:",
+                values=PROVIDER_PRIORITY,
+                value=[0],  # Erster Provider als Standard
+                max_height=min(6, len(PROVIDER_PRIORITY) + 1),  # Begrenzen auf 6 Zeilen
+                scroll_exit=True,
+                rely=rely_position + 8
+            )
+            
+            # Directory-Feld (minimal)
+            self.add(
+                npyscreen.TitleText,
+                name="Verzeichnis:",
+                value="",
+                editable=False,
+                rely=rely_position + min(14, len(PROVIDER_PRIORITY) + 9)
+            )
+            self.directory_field = self.add(
+                npyscreen.TitleText,
+                name="Verzeichnis:",
+                value=DEFAULT_DOWNLOAD_PATH,
+                editable=True,
+                rely=rely_position + min(14, len(PROVIDER_PRIORITY) + 9)
+            )
+            
+            # Aniskip-Selector (minimalistisch, versteckt)
+            self.aniskip_selector = self.add(
+                npyscreen.TitleSelectOne,
+                name="Aniskip:",
+                values=["Enable", "Disable"],
+                value=[0],
+                max_height=1,
+                hidden=True,  # Immer versteckt im einfachen Layout
+                scroll_exit=True
+            )
+            
+            # Statustext am unteren Rand
+            self.status_text = self.add(
+                npyscreen.MultiLine,
+                name="Status:",
+                values=["Bitte vergrößern Sie das Terminal für optimale Darstellung"],
+                max_height=3,
+                editable=False,
+                rely=height - 4
+            )
+            
+            # Tor-Anzeige ist im einfachen Layout nicht verfügbar
+            self.tor_ip = self.add(
+                npyscreen.TitleText,
+                name="Tor:",
+                value="Terminal zu klein - beschränkte Ansicht",
+                editable=False,
+                rely=height - 5
+            )
+            
+            # Minimal erforderliche Buttons
+            self.mark_existing_button = self.add(
+                npyscreen.ButtonPress,
+                name="Markiere vorhandene",
+                max_height=1,
+                when_pressed_function=self.mark_existing_episodes,
+                scroll_exit=True
+            )
+            
+            # Season selector (minimal)
+            self.season_selector = self.add(
+                npyscreen.TitleSelectOne,
+                name="Staffel:",
+                values=["Alle"],
+                value=[0],
+                max_height=3,
+                scroll_exit=True,
+                rely=rely_position + min(14, len(PROVIDER_PRIORITY) + 9)
+            )
+        else:
+            # Normales Layout für ausreichend große Fenster
+            self.use_simple_layout = False
+            
+            # Position 1: Linke Spalte (2/3 der Breite)
+            left_width = int(width * 2 / 3) - 2
+            
+            # Position 2: Rechte Spalte (1/3 der Breite)
+            right_width = width - left_width - 4
+            
+            # Erstelle ein Raster für das Layout
+            self.grid = self.add(npyscreen.GridColTitles)
+            self.grid.hidden = True  # Verstecken, damit es nicht angezeigt wird
+            
+            # Anime-Titel und Staffel anzeigen
+            self.add(npyscreen.TitleText, name="Anime:", value=anime_season_title, editable=False)
+            
+            # Episode-Liste (linke Spalte)
+            self.episode_selector = self.add(
+                npyscreen.MultiSelect,
+                name="Episoden",
+                max_height=height - 20,
+                max_width=left_width,
+                scroll_exit=True,
+                values=[]
+            )
+            
+            # Download-Status-Box (rechte Spalte)
+            self.download_monitor = self.add(
+                DownloadMonitorWidget,
+                name="Download-Fortschritt",
+                max_height=height - 20,
+                max_width=right_width,
+                rely=3,
+                relx=left_width + 3,  # Rechts neben der Episodenliste
+                scroll_exit=True
+            )
+            
+            # Selektoren und Optionen (linke Spalte)
+            # Ändere die vertikale Position, damit sie unter der Episodenliste erscheinen
+            rely_position = height - 16
+            
+            # Action-Selector
+            self.add(npyscreen.TitleText, name="Aktion:", value="", editable=False, rely=rely_position)
+            self.action_selector = self.add(
+                npyscreen.TitleSelectOne,
+                name="Aktion:",
+                values=["Watch", "Download", "Syncplay"],
+                value=[1],  # "Download" als Standard
+                max_height=4,
+                scroll_exit=True,
+                rely=rely_position
+            )
+            
+            # Language-Selector
+            self.add(
+                npyscreen.TitleText,
+                name="Sprache:",
+                value="",
+                editable=False,
+                rely=rely_position + 4
+            )
+            self.language_selector = self.add(
+                npyscreen.TitleSelectOne,
+                name="Sprache:",
+                values=["German Dub", "English Sub", "German Sub"],
+                value=[0],  # "German Dub" als Standard
+                max_height=4,
+                scroll_exit=True,
+                rely=rely_position + 4
+            )
+            
+            # Provider-Selector
+            self.add(
+                npyscreen.TitleText,
+                name="Provider:",
+                value="",
+                editable=False,
+                rely=rely_position + 8
+            )
+            self.provider_selector = self.add(
+                npyscreen.TitleSelectOne,
+                name="Provider:",
+                values=PROVIDER_PRIORITY,
+                value=[0],  # Erster Provider als Standard
+                max_height=len(PROVIDER_PRIORITY) + 1,
+                scroll_exit=True,
+                rely=rely_position + 8
+            )
+            
+            # Directory-Feld
+            self.add(
+                npyscreen.TitleText,
+                name="Verzeichnis:",
+                value="",
+                editable=False,
+                rely=rely_position + 8 + len(PROVIDER_PRIORITY) + 1
+            )
+            self.directory_field = self.add(
+                npyscreen.TitleText,
+                name="Verzeichnis:",
+                value=DEFAULT_DOWNLOAD_PATH,
+                editable=True,
+                rely=rely_position + 8 + len(PROVIDER_PRIORITY) + 1
+            )
+            
+            # AniskipSelector
+            self.add(
+                npyscreen.TitleText,
+                name="Aniskip:",
+                value="",
+                editable=False,
+                hidden=True,
+                rely=rely_position + 8 + len(PROVIDER_PRIORITY) + 3
+            )
+            self.aniskip_selector = self.add(
+                npyscreen.TitleSelectOne,
+                name="Aniskip:",
+                values=["Enable", "Disable"],
+                value=[0],  # "Enable" als Standard
+                max_height=3,
+                hidden=True,
+                scroll_exit=True,
+                rely=rely_position + 8 + len(PROVIDER_PRIORITY) + 3
+            )
+            
+            # Statustext am unteren Rand
+            self.status_text = self.add(
+                npyscreen.MultiLine,
+                name="Status:",
+                values=["Bereit."],
+                max_height=3,
+                editable=False,
+                rely=height - 6
+            )
+            
+            # Season Selector hinzufügen (für Staffelauswahl)
+            self.season_selector = self.add(
+                npyscreen.TitleSelectOne,
+                name="Staffel:",
+                values=["Alle"],
+                value=[0],
+                max_height=3,
+                scroll_exit=True,
+                rely=rely_position + 13 + len(PROVIDER_PRIORITY)
+            )
+            
+            self.seasons_map = {}  # Map für den schnellen Zugriff auf Staffeln
+            self.episode_info = {}  # Map für den schnellen Zugriff auf Episoden-Infos
+            self.episode_map = {}  # Map für den schnellen Zugriff auf Episode URLs
+            
+            # Zur Anzeige der Tor-IP
+            self.tor_ip = self.add(
+                npyscreen.TitleText,
+                name="Tor Status:",
+                value="Nicht verwendet",
+                relx=left_width + 3,
+                rely=height - 12,
+                max_width=right_width,
+                editable=False
+            )
+            
+            # Buttons für Aktionen
+            # Button zum Anzeigen nur fehlender Episoden
+            self.missing_button = self.add(
+                npyscreen.ButtonPress,
+                name="Nur fehlende Episoden anzeigen",
+                max_height=1,
+                when_pressed_function=self.show_only_missing_episodes,
+                scroll_exit=True,
+                relx=left_width + 3,
+                rely=height - 10
+            )
+            
+            # Button zum Auswählen fehlender Episoden
+            self.missing_select_button = self.add(
+                npyscreen.ButtonPress,
+                name="Alle fehlenden Episoden auswählen",
+                max_height=1,
+                when_pressed_function=self.select_all_missing_episodes,
+                scroll_exit=True,
+                relx=left_width + 3,
+                rely=height - 9
+            )
+            
+            # Button zum Auswählen aller Episoden einer Staffel
+            self.select_season_button = self.add(
+                npyscreen.ButtonPress,
+                name="Alle Episoden dieser Staffel auswählen",
+                max_height=1,
+                when_pressed_function=self.select_season_episodes,
+                scroll_exit=True,
+                relx=left_width + 3,
+                rely=height - 8
+            )
+            
+            # Button zum Auswählen aller Episoden hinzufügen
+            self.select_all_button = self.add(
+                npyscreen.ButtonPress,
+                name="Alle Episoden auswählen",
+                max_height=1,
+                when_pressed_function=self.select_all_episodes,
+                scroll_exit=True,
+                relx=left_width + 3,
+                rely=height - 7
+            )
+            
+            # Button zum Löschen abgeschlossener Downloads
+            self.clear_downloads_button = self.add(
+                npyscreen.ButtonPress,
+                name="Abgeschlossene Downloads löschen",
+                max_height=1,
+                when_pressed_function=lambda: self.download_monitor.clear_completed(),
+                scroll_exit=True,
+                relx=left_width + 3,
+                rely=height - 14
+            )
+            
+            self.toggle_button = self.add(
+                npyscreen.ButtonPress,
+                name="Description",
+                max_height=1,
+                when_pressed_function=self.go_to_second_form,
+                scroll_exit=True,
+                relx=left_width + 3,
+                rely=height - 16
+            )
+            
+            # Bei Nutzung von Tor, Tor-Info aktualisieren
+            if USE_TOR:
+                self.update_tor_status()
+                # Button für neue Tor-Identität hinzufügen
+                self.new_identity_button = self.add(
+                    npyscreen.ButtonPress,
+                    name="Neue Tor-Identität",
+                    max_height=1,
+                    when_pressed_function=self.request_new_tor_identity,
+                    scroll_exit=True,
+                    relx=left_width + 3,
+                    rely=height - 15
+                )
+                # Timer für Aktualisierung der Tor-IP starten
+                self.start_tor_info_update_timer()
+        
         # Für alle Ergebnisse die Staffel- und Episodeninformationen speichern
         for season, episode, title, url in sorted_results:
             self.episode_info[title] = (season, episode)
             self.episode_map[title] = url
-
+            
         # Liste aktualisieren
         self.episode_selector.values = [
             result[2] for result in sorted_results
         ]
-
+            
         # Die Original-Episodenliste für spätere Filterung speichern
         self.original_episode_list = self.episode_selector.values.copy()
-
+            
         # Initial die seasons_map aktualisieren
         self.update_season_maps()
-
-        # Buttons für Aktionen
-        # Button zum Anzeigen nur fehlender Episoden
-        self.missing_button = self.add(
-            npyscreen.ButtonPress,
-            name="Nur fehlende Episoden anzeigen",
-            max_height=1,
-            when_pressed_function=self.show_only_missing_episodes,
-            scroll_exit=True,
-            relx=left_width + 3,
-            rely=height - 10
-        )
-
-        # Button zum Auswählen fehlender Episoden
-        self.missing_select_button = self.add(
-            npyscreen.ButtonPress,
-            name="Alle fehlenden Episoden auswählen",
-            max_height=1,
-            when_pressed_function=self.select_all_missing_episodes,
-            scroll_exit=True,
-            relx=left_width + 3,
-            rely=height - 9
-        )
-
-        # Button zum Auswählen aller Episoden einer Staffel
-        self.select_season_button = self.add(
-            npyscreen.ButtonPress,
-            name="Alle Episoden dieser Staffel auswählen",
-            max_height=1,
-            when_pressed_function=self.select_season_episodes,
-            scroll_exit=True,
-            relx=left_width + 3,
-            rely=height - 8
-        )
-
-        # Button zum Auswählen aller Episoden hinzufügen
-        self.select_all_button = self.add(
-            npyscreen.ButtonPress,
-            name="Alle Episoden auswählen",
-            max_height=1,
-            when_pressed_function=self.select_all_episodes,
-            scroll_exit=True,
-            relx=left_width + 3,
-            rely=height - 7
-        )
-
-        # Button zum Löschen abgeschlossener Downloads
-        self.clear_downloads_button = self.add(
-            npyscreen.ButtonPress,
-            name="Abgeschlossene Downloads löschen",
-            max_height=1,
-            when_pressed_function=lambda: self.download_monitor.clear_completed(),
-            scroll_exit=True,
-            relx=left_width + 3,
-            rely=height - 14
-        )
-
+        
+        # Allgemeine Konfiguration für alle Layouts
         self.display_text = False
-
+        
+        # Event-Handler für Verzeichnis-Sichtbarkeit
+        self.action_selector.when_value_edited = self.update_directory_visibility
+        logging.debug("Set update_directory_visibility as callback for action_selector")
+        
         # Automatisch nach vorhandenen Episoden suchen
         threading.Timer(0.5, self.mark_existing_episodes).start()
-
-        self.toggle_button = self.add(
-            npyscreen.ButtonPress,
-            name="Description",
-            max_height=1,
-            when_pressed_function=self.go_to_second_form,
-            scroll_exit=True,
-            relx=left_width + 3,
-            rely=height - 16
-        )
-
-        self.action_selector.when_value_edited = self.update_directory_visibility
-        logging.debug(
-            "Set update_directory_visibility as callback for action_selector")
-
-        # Bei Nutzung von Tor, Tor-Info aktualisieren
-        if USE_TOR:
-            self.update_tor_status()
-            # Button für neue Tor-Identität hinzufügen
-            self.new_identity_button = self.add(
-                npyscreen.ButtonPress,
-                name="Neue Tor-Identität",
-                max_height=1,
-                when_pressed_function=self.request_new_tor_identity,
-                scroll_exit=True,
-                relx=left_width + 3,
-                rely=height - 15
-            )
-            # Timer für Aktualisierung der Tor-IP starten
-            self.start_tor_info_update_timer()
 
     def setup_signal_handling(self):
         def signal_handler(_signal_number, _frame):
@@ -729,11 +874,12 @@ class EpisodeForm(npyscreen.ActionForm):
             display_title = f"{anime_title} - S{season:02d}E{episode:02d}"
             language = params.get('language', 'Unknown')
             
-            # Download im Monitor registrieren
-            download_id = self.download_monitor.add_download(display_title, episode_url)
-            
-            # Status auf "Lädt..." setzen
-            self.download_monitor.update_download(download_id, status='Lädt...')
+            # Download im Monitor registrieren wenn verfügbar
+            download_id = None
+            if hasattr(self, 'download_monitor') and self.download_monitor:
+                download_id = self.download_monitor.add_download(display_title, episode_url)
+                # Status auf "Lädt..." setzen
+                self.download_monitor.update_download(download_id, status='Lädt...')
             
             # Hauptstatus aktualisieren
             self.status_text.value = f"Starte Download: {display_title}"
@@ -749,8 +895,9 @@ class EpisodeForm(npyscreen.ActionForm):
                     langs_str = ", ".join(result.get("available_languages", []))
                     error_msg = f"Keine Streams für {language} verfügbar. Verfügbar: {langs_str}"
                     
-                # Status im Monitor aktualisieren
-                self.download_monitor.update_download(download_id, status=f"Fehler: {error_msg}")
+                # Status im Monitor aktualisieren wenn verfügbar
+                if download_id is not None:
+                    self.download_monitor.update_download(download_id, status=f"Fehler: {error_msg}")
                 
                 # Fehlermeldung im TUI anzeigen
                 npyscreen.notify_confirm(
@@ -766,14 +913,16 @@ class EpisodeForm(npyscreen.ActionForm):
             else:
                 # Prüfen, ob die Datei existiert, um zu bestätigen, dass der Download erfolgreich war
                 if params.get('action_selected') == 'Download':
-                    # Status im Monitor aktualisieren
-                    self.download_monitor.update_download(download_id, status='Abgeschlossen')
+                    # Status im Monitor aktualisieren wenn verfügbar
+                    if download_id is not None:
+                        self.download_monitor.update_download(download_id, status='Abgeschlossen')
                     
                     # Hauptstatus aktualisieren
                     self.status_text.value = f"Download abgeschlossen: {display_title}"
                 else:
-                    # Status im Monitor aktualisieren (für "Watch" oder "Syncplay")
-                    self.download_monitor.update_download(download_id, status='Angeschaut')
+                    # Status im Monitor aktualisieren (für "Watch" oder "Syncplay") wenn verfügbar
+                    if download_id is not None:
+                        self.download_monitor.update_download(download_id, status='Angeschaut')
                     
                     # Hauptstatus aktualisieren
                     self.status_text.value = f"Erfolgreich ausgeführt: {display_title}"
@@ -783,8 +932,8 @@ class EpisodeForm(npyscreen.ActionForm):
         except Exception as e:
             logging.exception(f"Fehler beim Ausführen der Episode: {e}")
             
-            # Status im Monitor aktualisieren
-            if download_id:
+            # Status im Monitor aktualisieren wenn verfügbar
+            if download_id is not None:
                 self.download_monitor.update_download(download_id, status=f"Fehler: {str(e)}")
             
             # Zeige Fehler im TUI an
