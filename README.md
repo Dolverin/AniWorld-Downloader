@@ -21,6 +21,7 @@ AniWorld Downloader is a command-line tool built to download and stream anime co
   - [Latest Release](#installing-aniworld-downloader)
   - [Dev Version (Unstable)](#development-version-unstable--requires-git)
 - [Uninstallation](#uninstallation)
+- [Configuration](#configuration)
 
 ### Usage Guide
 - [Usage Basics](#usage)
@@ -167,6 +168,40 @@ To uninstall AniWorld Downloader, run the following command:
 ```shell
 aniworld --uninstall
 ```
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Configuration
+
+AniWorld Downloader can be configured using command-line options. Here are some common configurations:
+
+- **Use Tor for Anonymous Access**:
+
+    ```shell
+    aniworld --use-tor
+    ```
+
+- **Set a Custom Proxy**:
+
+    ```shell
+    aniworld --proxy http://127.0.0.1:8080
+    ```
+
+- **Use Playwright for Headless Browser Access**:
+
+    ```shell
+    aniworld --use-playwright
+    ```
+
+### Konfigurationsdatei
+
+Seit Version X.X.X unterstützt AniWorld Downloader eine zentrale Konfigurationsdatei, die es ermöglicht, Standardeinstellungen dauerhaft zu speichern. Die Konfigurationsdatei befindet sich unter:
+
+```
+~/.config/aniworld/config.json
+```
+
+Diese Datei wird automatisch erstellt, wenn das Programm zum ersten Mal ausgeführt wird. Eine detaillierte Dokumentation der Konfigurationsoptionen finden Sie in der [Konfigurationsdokumentation](docs/CONFIGURATION.md).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
