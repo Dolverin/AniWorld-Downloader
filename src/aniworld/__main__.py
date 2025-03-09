@@ -1728,10 +1728,39 @@ def run_app_with_query(args):
     else:
         try:
             try:
+                # Terminal-Größe prüfen vor allem anderen
+                import shutil
+                columns, lines = shutil.get_terminal_size()
+                min_width, min_height = 70, 20  # Minimale Anforderungen
+                
+                if columns < min_width or lines < min_height:
+                    # Terminal ist definitiv zu klein
+                    clear_screen()
+                    print(f"\n⚠️ Terminal zu klein: {columns}x{lines}, mindestens {min_width}x{min_height} empfohlen")
+                    print("\nOptionen:")
+                    print("1. Terminal vergrößern und erneut starten")
+                    print("2. Trotzdem fortfahren (möglicherweise eingeschränkte Darstellung)")
+                    
+                    try:
+                        choice = input("\nWählen Sie eine Option (1 oder 2): ")
+                        if choice.strip() == "2":
+                            # Benutzer möchte fortfahren - wir versuchen mit einer kleineren Konfiguration
+                            print("\nVersuche mit angepasster Darstellung fortzufahren...")
+                            logging.debug(f"Benutzer hat fortsetzen gewählt trotz kleiner Terminal-Größe: {columns}x{lines}")
+                        else:
+                            # Benutzer möchte nicht fortfahren
+                            print("\nProgramm wird beendet. Bitte vergrößern Sie das Terminal und starten Sie erneut.")
+                            sys.exit(0)
+                    except (KeyboardInterrupt, EOFError):
+                        # Benutzer hat abgebrochen
+                        print("\nEingabe abgebrochen. Programm wird beendet.")
+                        sys.exit(0)
+                
+                # Versuche, die Terminal-Größe anzupassen (wenn möglich)
                 logging.debug("Trying to resize Terminal.")
                 set_terminal_size()
-                # Prüfe und warne statt abzubrechen
-                check_terminal_size()
+                
+                # Wir versuchen die TUI zu starten, egal wie
                 run_app(search_anime(slug=args.slug, link=args.link))
             except npyscreen.wgwidget.NotEnoughSpaceForWidget:
                 logging.debug("Not enough space for widget. Versuche alternative Darstellung.")
@@ -1753,11 +1782,23 @@ def run_app_with_query(args):
                     clear_screen()
                     run_app(search_anime(slug=args.slug, link=args.link))
                 except Exception as e:
-                    # Bei erneutem Fehler endgültig abbrechen
+                    # Bei erneutem Fehler fragen, ob Benutzer trotzdem fortsetzen möchte
                     logging.error(f"Konnte UI nicht anpassen: {str(e)}")
-                    print("Die Terminal-Größe ist wirklich zu klein.")
-                    print("Bitte vergrößern Sie Ihr Terminal und starten Sie die Anwendung neu.")
-                    sys.exit(1)
+                    print("\nDie Terminal-Größe ist zu klein für die grafische Darstellung.")
+                    print("Möchten Sie mit einer einfachen textbasierten Benutzeroberfläche fortfahren? (j/n)")
+                    
+                    try:
+                        choice = input("Eingabe (j/n): ")
+                        if choice.lower() in ["j", "ja", "y", "yes"]:
+                            # Einfache textbasierte UI - direktes Ausführen
+                            print("\nVerwende einfache Benutzeroberfläche...")
+                            direct_execute_with_params(args)
+                        else:
+                            print("\nProgramm wird beendet. Bitte vergrößern Sie Ihr Terminal und starten Sie neu.")
+                            sys.exit(0)
+                    except (KeyboardInterrupt, EOFError):
+                        print("\nEingabe abgebrochen. Programm wird beendet.")
+                        sys.exit(0)
         except KeyboardInterrupt:
             logging.debug("KeyboardInterrupt encountered. Exiting.")
             sys.exit()
@@ -1822,31 +1863,47 @@ def direct_execute_with_params(args):
 def check_terminal_size(min_width=70, min_height=20):
     """
     Prüft, ob das Terminal groß genug ist, und gibt Hinweise statt Fehler aus.
+    Bei zu kleinem Terminal wird eine Option für einfache UI geboten.
     
     Args:
         min_width: Mindestbreite des Terminals in Zeichen
         min_height: Mindesthöhe des Terminals in Zeilen
         
     Returns:
-        True, wenn das Terminal groß genug ist, sonst False
+        True, wenn das Terminal groß genug ist oder der Benutzer fortfahren möchte, 
+        sonst False
     """
     try:
         import shutil
         columns, lines = shutil.get_terminal_size()
         
         if columns < min_width or lines < min_height:
-            print(f"Warnung: Das Terminal ist möglicherweise zu klein ({columns}x{lines}).")
-            print(f"Für optimale Darstellung wird eine Größe von mindestens {min_width}x{min_height} empfohlen.")
-            print("Die Anwendung wird trotzdem gestartet...")
-            print()
-            # 2 Sekunden warten, damit der Benutzer die Meldung lesen kann
-            import time
-            time.sleep(2)
-            return False
+            print(f"\n⚠️ Terminal zu klein: {columns}x{lines}, mindestens {min_width}x{min_height} notwendig")
+            print("\nOptionen:")
+            print("1. Terminal vergrößern und erneut starten")
+            print("2. Trotzdem fortfahren (eingeschränkte Darstellung)")
+            
+            try:
+                choice = input("\nWählen Sie eine Option (1 oder 2): ")
+                if choice.strip() == "2":
+                    # Benutzer möchte fortfahren
+                    print("\nDie Anwendung wird mit eingeschränkter Darstellung fortgesetzt...")
+                    print("Hinweis: Einige Elemente werden möglicherweise nicht korrekt angezeigt.")
+                    return True
+                else:
+                    # Benutzer möchte nicht fortfahren
+                    print("\nProgramm wird beendet. Bitte vergrößern Sie das Terminal und starten Sie erneut.")
+                    sys.exit(0)
+            except (KeyboardInterrupt, EOFError):
+                # Benutzer hat abgebrochen
+                print("\nEingabe abgebrochen. Programm wird beendet.")
+                sys.exit(0)
+                
         return True
     except Exception as e:
-        logging.debug(f"Fehler bei der Terminal-Größenprüfung: {e}")
-        return True  # Bei Fehler trotzdem weitermachen
+        logging.error(f"Fehler bei Terminal-Größenprüfung: {e}")
+        # Im Fehlerfall fortfahren, um andere Fehler nicht zu blockieren
+        return True
 
 if __name__ == "__main__":
     main()
