@@ -52,7 +52,7 @@ from aniworld.common import (adventure, check_if_episode_exists,
                              set_terminal_size)
 from aniworld.execute import providers
 from aniworld.extractors import hanime, jav, nhentai, streamkiste
-from aniworld.globals import DEFAULT_DOWNLOAD_PATH
+from aniworld.globals import DEFAULT_DOWNLOAD_PATH, PROVIDER_PRIORITY, USE_TOR
 from aniworld.search import search_anime
 from aniworld.common.db import get_db
 
