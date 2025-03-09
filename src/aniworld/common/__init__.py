@@ -71,3 +71,30 @@ def get_tor_version() -> str:
         return "nicht verfügbar"
     except (FileNotFoundError, subprocess.SubprocessError):
         return "nicht installiert"
+
+def is_tor_running() -> bool:
+    """Prüft, ob der Tor-Dienst auf dem System läuft."""
+    try:
+        import subprocess
+        import platform
+        
+        if platform.system() == "Windows":
+            cmd = ["tasklist", "/FI", "IMAGENAME eq tor.exe", "/NH"]
+        else:  # Linux/Mac
+            cmd = ["pgrep", "-x", "tor"]
+            
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False
+        )
+        
+        # Wenn der Prozess gefunden wurde, ist Tor aktiv
+        if result.returncode == 0 and result.stdout.strip():
+            return True
+            
+        return False
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return False
