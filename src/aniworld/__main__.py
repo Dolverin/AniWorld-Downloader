@@ -375,6 +375,11 @@ class EpisodeForm(npyscreen.ActionForm):
             self.display()
             return
 
+        # Stellen sicher, dass die Episoden auf Vorhandensein überprüft wurden
+        if not hasattr(self, 'existing_episodes'):
+            logging.debug("Checking for existing episodes before processing")
+            self.mark_existing_episodes()
+
         selected_episodes = self.episode_selector.get_selected_objects()
         action_selected = self.action_selector.get_selected_objects()
         language_selected = self.language_selector.get_selected_objects()
