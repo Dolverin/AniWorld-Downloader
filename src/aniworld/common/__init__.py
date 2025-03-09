@@ -36,7 +36,8 @@ from .common import (
     get_description_with_id,
     fetch_anime_id,
     install_and_import,
-    check_if_episode_exists
+    check_if_episode_exists,
+    get_tor_version
 )
 
 from .ascii_art import display_ascii_art

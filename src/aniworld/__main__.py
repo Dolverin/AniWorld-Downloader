@@ -48,8 +48,9 @@ from aniworld.common import (
     get_description,
     get_description_with_id,
     check_if_episode_exists,
-    fetch_url_content,
-    get_language_string
+    get_tor_version,
+    get_language_string,
+    fetch_url_content
 )
 from aniworld.extractors import (
     nhentai,
@@ -235,6 +236,41 @@ class EpisodeForm(npyscreen.ActionForm):
 
         logging.debug("Provider selector created")
         
+        # Tor-Kontrollbereich hinzufügen
+        self.tor_label = self.add(
+            npyscreen.TitleFixedText,
+            name="Tor-Netzwerk:",
+            value="Initialisiere...",
+            editable=False
+        )
+        
+        self.tor_selector = self.add(
+            npyscreen.TitleSelectOne,
+            name="Tor Status:",
+            values=["Aktivieren", "Deaktivieren"],
+            max_height=3,
+            value=[0 if aniworld_globals.USE_TOR else 1],
+            scroll_exit=True
+        )
+        
+        # Event-Handler für Tor-Status-Änderung
+        self.tor_selector.when_value_edited = self.update_tor_status
+        
+        self.tor_ip_text = self.add(
+            npyscreen.TitleFixedText,
+            name="Aktuelle IP:",
+            value="Wird abgerufen...",
+            editable=False
+        )
+        
+        self.tor_identity_button = self.add(
+            npyscreen.ButtonPress,
+            name="Neue Tor-Identität anfordern",
+            when_pressed_function=self.request_new_tor_identity,
+            max_height=1,
+            scroll_exit=True
+        )
+        
         # Status-Text für Benachrichtigungen hinzufügen
         self.status_text = self.add(
             npyscreen.TitleFixedText,
@@ -250,7 +286,7 @@ class EpisodeForm(npyscreen.ActionForm):
             max_height=6,
             scroll_exit=True
         )
-        logging.debug("Episode selector created")
+        logging.debug("Episode selector created with %s episodes", len(episode_list))
         
         # Dropdown für Staffelauswahl
         self.season_selector = self.add(
@@ -321,6 +357,15 @@ class EpisodeForm(npyscreen.ActionForm):
 
         self.action_selector.when_value_edited = self.update_directory_visibility
         logging.debug("Set update_directory_visibility as callback for action_selector")
+
+        # Original-Episode-Liste speichern für Filteroperationen
+        self.original_episode_list = episode_list.copy()
+        
+        # Initialisiere Tor-Info und starte regelmäßige Updates
+        self.update_tor_info()
+        self.start_tor_info_update_timer()
+        
+        self.display()
 
     def setup_signal_handling(self):
         def signal_handler(_signal_number, _frame):
@@ -715,9 +760,10 @@ class EpisodeForm(npyscreen.ActionForm):
         self.season_selector.display()
 
     def on_cancel(self):
-        logging.debug("Cancel button pressed")
-        self.cancel_timer()
-        self.parentApp.setNextForm(None)
+        """Wird beim Beenden des Formulars aufgerufen."""
+        self._exited = True  # Signal für den Update-Thread zum Beenden
+        self.cancel_timer()  # Bestehenden Timer stoppen
+        self.parentApp.switchForm(None)
 
     def go_to_second_form(self):
         self.parentApp.switchForm("SECOND")
@@ -978,6 +1024,139 @@ class EpisodeForm(npyscreen.ActionForm):
         # Status-Nachricht aktualisieren
         self.status_text.value = f"{len(missing_indices)} fehlende Episoden wurden ausgewählt."
         self.display()
+
+    def update_tor_status(self):
+        """Aktualisiert den Tor-Status basierend auf der Benutzerauswahl."""
+        selected_option = self.tor_selector.value[0]
+        new_tor_status = selected_option == 0  # Aktivieren = 0, Deaktivieren = 1
+        
+        # Status aktualisieren
+        if new_tor_status != aniworld_globals.USE_TOR:
+            self.status_text.value = f"Tor-Status wird auf {'aktiviert' if new_tor_status else 'deaktiviert'} gesetzt..."
+            self.display()
+            
+            try:
+                # Tor-Client aktualisieren
+                from src.aniworld.common.tor_client import get_tor_client
+                
+                # Setze globale Variable
+                aniworld_globals.USE_TOR = new_tor_status
+                os.environ['USE_TOR'] = 'True' if new_tor_status else 'False'
+                
+                # Hole oder initialisiere Tor-Client mit neuem Status
+                tor_client = get_tor_client(use_tor=new_tor_status)
+                
+                if new_tor_status:
+                    # Starte Tor, wenn aktiviert
+                    self.status_text.value = "Tor wird gestartet..."
+                    self.display()
+                    
+                    if tor_client.start():
+                        self.status_text.value = "Tor erfolgreich gestartet"
+                    else:
+                        self.status_text.value = "Fehler beim Starten von Tor"
+                else:
+                    # Stoppe Tor, wenn deaktiviert
+                    self.status_text.value = "Tor wird beendet..."
+                    self.display()
+                    
+                    tor_client.stop()
+                    self.status_text.value = "Tor erfolgreich beendet"
+            except ImportError:
+                self.status_text.value = "Tor-Unterstützung ist nicht verfügbar. Bitte installieren Sie die erforderlichen Module (stem, PySocks)."
+            except Exception as e:
+                self.status_text.value = f"Fehler bei Tor-Aktualisierung: {str(e)}"
+            
+            # Aktualisiere die Tor-Info
+            self.update_tor_info()
+            
+            # Wert aktualisieren, falls Operation fehlgeschlagen ist
+            self.tor_selector.value = [0 if aniworld_globals.USE_TOR else 1]
+
+    def request_new_tor_identity(self):
+        """Fordert eine neue Tor-Identität an (neue IP-Adresse)."""
+        if not aniworld_globals.USE_TOR:
+            self.status_text.value = "Tor ist nicht aktiviert. Bitte aktivieren Sie Tor zuerst."
+            self.display()
+            return
+            
+        try:
+            from src.aniworld.common.tor_client import get_tor_client
+            
+            self.status_text.value = "Neue Tor-Identität wird angefordert..."
+            self.display()
+            
+            tor_client = get_tor_client(use_tor=True)
+            if tor_client.new_identity():
+                self.status_text.value = "Neue Tor-Identität erfolgreich angefordert"
+            else:
+                self.status_text.value = "Fehler beim Anfordern einer neuen Tor-Identität"
+                
+            # Aktualisiere die IP-Adresse
+            self.update_tor_info()
+            
+        except ImportError:
+            self.status_text.value = "Tor-Unterstützung ist nicht verfügbar. Bitte installieren Sie die erforderlichen Module (stem, PySocks)."
+        except Exception as e:
+            self.status_text.value = f"Fehler beim Anfordern einer neuen Tor-Identität: {str(e)}"
+    
+    def update_tor_info(self):
+        """Aktualisiert die Tor-Informationen in der UI."""
+        # Status-Text aktualisieren
+        self.tor_label.value = f"{'Aktiv' if aniworld_globals.USE_TOR else 'Inaktiv'} - Tor {get_tor_version()}"
+        
+        # IP-Adresse aktualisieren
+        if aniworld_globals.USE_TOR:
+            try:
+                from src.aniworld.common.tor_client import get_tor_client
+                
+                # Thread für IP-Abfrage starten, um UI nicht zu blockieren
+                def update_ip_thread():
+                    try:
+                        tor_client = get_tor_client(use_tor=True)
+                        ip = tor_client.get_current_ip()
+                        
+                        # UI-Update in Hauptthread durchführen
+                        def update_ui():
+                            if ip:
+                                self.tor_ip_text.value = ip
+                            else:
+                                self.tor_ip_text.value = "IP-Adresse konnte nicht abgerufen werden"
+                            self.display()
+                        
+                        # UI-Update ausführen
+                        if hasattr(self, 'parentApp') and hasattr(self.parentApp, '_Forms'):
+                            npyscreen.globals.MAINLOOP.schedule_task_in_main_thread(update_ui)
+                    except Exception as e:
+                        logging.error(f"Fehler beim Abrufen der IP-Adresse: {str(e)}")
+                
+                # Thread starten
+                threading.Thread(target=update_ip_thread, daemon=True).start()
+                
+            except ImportError:
+                self.tor_ip_text.value = "Tor-Module nicht verfügbar"
+        else:
+            self.tor_ip_text.value = "Tor ist deaktiviert"
+        
+        # UI aktualisieren
+        self.display()
+
+    def start_tor_info_update_timer(self):
+        """Startet einen Timer für regelmäßige Updates der Tor-Informationen."""
+        def update_tor_info_timer():
+            while not getattr(self, '_exited', False):
+                try:
+                    # Aktualisiere Tor-Infos alle 30 Sekunden
+                    self.update_tor_info()
+                except Exception as e:
+                    logging.error(f"Fehler bei regelmäßigem Tor-Info-Update: {str(e)}")
+                finally:
+                    # Warte 30 Sekunden bis zum nächsten Update
+                    time.sleep(30)
+        
+        # Starte Background-Thread für Updates
+        self.tor_info_thread = threading.Thread(target=update_tor_info_timer, daemon=True)
+        self.tor_info_thread.start()
 
 
 # pylint: disable=R0901
@@ -1573,6 +1752,7 @@ def check_other_extractors(episode_urls: list):
     return remaining_urls
 
 
+
 def execute_with_params(params: Dict[str, Any]) -> None:
     """
     Führt die Verarbeitung mit den angegebenen Parametern aus und zeigt Fehlermeldungen im TUI an
@@ -1588,10 +1768,9 @@ def execute_with_params(params: Dict[str, Any]) -> None:
         
         if result:  # Fehler aufgetreten
             error_msg = result.get("message", "Unbekannter Fehler")
-            available_langs = result.get("available_languages", [])
             
-            if "keine Streams verfügbar" in error_msg.lower() and available_langs:
-                langs_str = ", ".join(available_langs)
+            if "keine Streams verfügbar" in error_msg.lower() and result.get("available_languages", []):
+                langs_str = ", ".join(result.get("available_languages", []))
                 error_msg = f"Keine Streams für die gewählte Sprache verfügbar.\nVerfügbare Sprachen: {langs_str}"
             
             # Fehlermeldung im TUI anzeigen
