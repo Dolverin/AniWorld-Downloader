@@ -1602,13 +1602,7 @@ def execute_with_params(params: Dict[str, Any]) -> None:
                 wrap=True,
                 wide=True
             )
-        elif not (only_direct_link or only_command):
-            npyscreen.notify_confirm(
-                "Ausführung erfolgreich abgeschlossen!",
-                title="Erfolg",
-                form_color="GOOD",
-                wrap=True
-            )
+        # Erfolgsmeldung wurde entfernt
             
     except Exception as e:
         npyscreen.notify_confirm(

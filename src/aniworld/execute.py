@@ -797,4 +797,4 @@ def process_provider(provider: str, provider_data: dict, params: dict, anime_tit
     }
     
     # Führe die Aktion aus
-    execute(action_params)
+    perform_action(action_params)
