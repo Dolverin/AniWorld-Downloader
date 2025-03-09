@@ -3,4 +3,50 @@ disable=missing-module-docstring,
         missing-function-docstring,
         missing-class-docstring,
         fixme,
-        too-many-lines
+        too-many-lines,
+        broad-except,
+        too-many-locals,
+        too-many-branches,
+        too-many-statements,
+        too-many-instance-attributes,
+        too-many-arguments,
+        too-few-public-methods,
+        invalid-name
+
+[FORMAT]
+max-line-length=100
+indent-string='    '
+max-module-lines=2000
+
+[DESIGN]
+max-attributes=20
+max-args=10
+max-locals=20
+max-branches=20
+max-statements=100
+min-public-methods=1
+
+[TYPECHECK]
+ignored-modules=aniworld.globals, aniworld.config
+ignore-patterns=*_pb2.py,*_pb2_grpc.py
+
+[MESSAGES CONTROL]
+disable=protected-access,
+        bare-except,
+        unused-argument,
+        global-statement,
+        suppressed-message,
+        useless-suppression,
+        deprecated-pragma,
+        use-symbolic-message-instead,
+        no-self-use,
+        unnecessary-pass
+
+[REFACTORING]
+max-nested-blocks=5
+
+[SIMILARITIES]
+min-similarity-lines=7
+ignore-comments=yes
+ignore-docstrings=yes
+ignore-imports=yes
