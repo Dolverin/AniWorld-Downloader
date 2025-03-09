@@ -178,65 +178,93 @@ def fetch_url_content_without_playwright(
 def fetch_url_content_with_playwright(
     url: str, proxy: Optional[str] = None, check: bool = True
 ) -> Optional[bytes]:
-
     if "aniworld.to/redirect/" in url:
         return fetch_url_content_without_playwright(url, proxy, check)
 
     headers = {'User-Agent': aniworld_globals.DEFAULT_USER_AGENT}
 
-    install_and_import("playwright")
-    from playwright.sync_api import \
-        sync_playwright  # pylint: disable=import-error, import-outside-toplevel
+    try:
+        install_and_import("playwright")
+        from playwright.sync_api import \
+            sync_playwright  # pylint: disable=import-error, import-outside-toplevel
 
-    with sync_playwright() as p:
-        options = {'proxy': {'server': proxy}} if proxy else {}
-        headless = os.getenv("HEADLESS", not aniworld_globals.IS_DEBUG_MODE)
-        browser = p.chromium.launch(headless=headless)
+        with sync_playwright() as p:
+            # Browser-Start mit Fehlerbehandlung
+            try:
+                options = {'proxy': {'server': proxy}} if proxy else {}
+                headless = os.getenv("HEADLESS", not aniworld_globals.IS_DEBUG_MODE)
+                browser = p.chromium.launch(headless=headless)
+            except Exception as e:
+                if "Executable doesn't exist" in str(e) or "Please run the following command" in str(e):
+                    # Versuche automatisch die Browser zu installieren
+                    logging.info("Playwright-Browser nicht gefunden. Versuche automatische Installation...")
+                    try:
+                        subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
+                        logging.info("Playwright-Browser erfolgreich installiert!")
+                        # Versuche erneut den Browser zu starten
+                        browser = p.chromium.launch(headless=headless)
+                    except Exception as install_error:
+                        if check:
+                            logging.error(f"Fehler bei der Installation der Playwright-Browser: {install_error}")
+                            print("Die Playwright-Browser konnten nicht automatisch installiert werden.")
+                            print("Bitte führen Sie manuell aus: python -m playwright install")
+                        return None
+                else:
+                    # Anderer Fehler
+                    if check:
+                        logging.error(f"Fehler beim Starten des Browsers: {e}")
+                    return None
 
-        context = browser.new_context(**options)
-        page = context.new_page()
-        page.set_extra_http_headers(headers)
+            context = browser.new_context(**options)
+            page = context.new_page()
+            page.set_extra_http_headers(headers)
 
-        try:
-            response = page.goto(url, timeout=10000)
-            content = page.content()
-            logging.debug(content)
-
-            if page.locator(
-                "h1#ddg-l10n-title:has-text('Checking your browser before accessing')"
-            ).count() > 0:
-                logging.debug("Captcha detected, attempting to solve.")
-
-                for attempt in range(120):
-                    page.wait_for_timeout(1000)
-                    if page.locator(
-                        "h1#ddg-l10n-title:has-text('Checking your browser before accessing')"
-                    ).count() == 0:
-                        logging.debug("Captcha solved.")
-                        break
-                    logging.debug(
-                        "Captcha still present, retry %s/120", attempt + 1)
+            try:
+                response = page.goto(url, timeout=10000)
+                content = page.content()
+                logging.debug(content)
 
                 if page.locator(
                     "h1#ddg-l10n-title:has-text('Checking your browser before accessing')"
                 ).count() > 0:
-                    raise TimeoutError(
-                        "Captcha not solved within the time limit.")
+                    logging.debug("Captcha detected, attempting to solve.")
 
-            if response.status != 200:
-                raise HTTPError(f"Failed to fetch page: {response.status}")
+                    for attempt in range(120):
+                        page.wait_for_timeout(1000)
+                        if page.locator(
+                            "h1#ddg-l10n-title:has-text('Checking your browser before accessing')"
+                        ).count() == 0:
+                            logging.debug("Captcha solved.")
+                            break
+                        logging.debug(
+                            "Captcha still present, retry %s/120", attempt + 1)
 
-            page.wait_for_timeout(3000)
-            return page.content()
+                    if page.locator(
+                        "h1#ddg-l10n-title:has-text('Checking your browser before accessing')"
+                    ).count() > 0:
+                        raise TimeoutError(
+                            "Captcha not solved within the time limit.")
 
-        except (TimeoutError, HTTPError) as error:
-            if check:
-                logging.critical("Request to %s failed: %s", url, error)
-                sys.exit(1)
-            return None
-        finally:
-            context.close()
-            browser.close()
+                if response.status != 200:
+                    raise HTTPError(f"Failed to fetch page: {response.status}")
+
+                page.wait_for_timeout(3000)
+                return page.content().encode('utf-8')
+
+            except (TimeoutError, HTTPError) as error:
+                if check:
+                    logging.critical("Request to %s failed: %s", url, error)
+                    sys.exit(1)
+                return None
+
+            finally:
+                context.close()
+                browser.close()
+
+    except Exception as e:
+        if check:
+            logging.error(f"Fehler bei Playwright für {url}: {e}")
+        return None
 
 
 def clear_screen() -> None:
@@ -1831,24 +1859,37 @@ def get_description_with_id(anime_title: str, season: int = 1):
 
 
 def install_and_import(package):
+    """
+    Installiert und importiert ein Python-Paket bei Bedarf.
+    
+    Args:
+        package: Der Name des zu installierenden Pakets
+        
+    Returns:
+        Das importierte Modul oder None bei Fehler
+    """
     try:
-        __import__(package)
+        # Versuche das Paket zu importieren
+        module = __import__(package)
+        return module
     except ImportError:
         while True:
-            print(f'The Package "{package}" is not installed!')
-            user_input = input(
-                f'Do you want me to run "pip install {package}" for you?  (Y|N) ').upper()
-            if user_input == "Y":
-                print(f"{package} is installing...")
-                subprocess.check_call(
-                    [sys.executable, "-m", "pip", "install", package])
-                break
-            if user_input == "N":
-                sys.exit()
+            print(f'Das Paket "{package}" ist nicht installiert!')
+            user_input = input(f'Möchten Sie "pip install {package}" automatisch ausführen? (J|N) ').upper()
+            if user_input == "J" or user_input == "Y":
+                print(f"{package} wird installiert...")
+                try:
+                    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+                    # Erneuter Import nach erfolgreicher Installation
+                    return __import__(package)
+                except Exception as e:
+                    print(f"Fehler bei der Installation: {e}")
+                    return None
+            elif user_input == "N":
+                print(f"Das Programm benötigt {package} zum Ausführen.")
+                sys.exit(1)
             else:
                 clear_screen()
-    finally:
-        globals()[package] = __import__(package)
 
 
 def check_if_episode_exists(
