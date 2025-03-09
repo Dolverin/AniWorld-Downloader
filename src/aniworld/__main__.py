@@ -1038,7 +1038,7 @@ class EpisodeForm(npyscreen.ActionForm):
             
             try:
                 # Tor-Client aktualisieren
-                from src.aniworld.common.tor_client import get_tor_client
+                from aniworld.common.tor_client import get_tor_client
                 
                 # Setze globale Variable
                 aniworld_globals.USE_TOR = new_tor_status
@@ -1053,36 +1053,38 @@ class EpisodeForm(npyscreen.ActionForm):
                     self.display()
                     
                     if tor_client.start():
-                        self.status_text.value = "Tor erfolgreich gestartet"
+                        self.status_text.value = "Tor wurde erfolgreich aktiviert"
                     else:
                         self.status_text.value = "Fehler beim Starten von Tor"
                 else:
                     # Stoppe Tor, wenn deaktiviert
-                    self.status_text.value = "Tor wird beendet..."
+                    self.status_text.value = "Tor wird gestoppt..."
                     self.display()
                     
                     tor_client.stop()
-                    self.status_text.value = "Tor erfolgreich beendet"
+                    self.status_text.value = "Tor wurde deaktiviert"
+                    
+                # UI aktualisieren
+                self.update_tor_info()
+                        
             except ImportError:
                 self.status_text.value = "Tor-Unterstützung ist nicht verfügbar. Bitte installieren Sie die erforderlichen Module (stem, PySocks)."
             except Exception as e:
-                self.status_text.value = f"Fehler bei Tor-Aktualisierung: {str(e)}"
-            
-            # Aktualisiere die Tor-Info
-            self.update_tor_info()
-            
-            # Wert aktualisieren, falls Operation fehlgeschlagen ist
+                self.status_text.value = f"Fehler bei Tor-Aktivierung: {str(e)}"
+                
+            # UI-Elemente aktualisieren
             self.tor_selector.value = [0 if aniworld_globals.USE_TOR else 1]
+            self.display()
 
     def request_new_tor_identity(self):
-        """Fordert eine neue Tor-Identität an (neue IP-Adresse)."""
+        """Fordert eine neue Tor-Identität an."""
         if not aniworld_globals.USE_TOR:
             self.status_text.value = "Tor ist nicht aktiviert. Bitte aktivieren Sie Tor zuerst."
             self.display()
             return
             
         try:
-            from src.aniworld.common.tor_client import get_tor_client
+            from aniworld.common.tor_client import get_tor_client
             
             self.status_text.value = "Neue Tor-Identität wird angefordert..."
             self.display()
@@ -1093,14 +1095,16 @@ class EpisodeForm(npyscreen.ActionForm):
             else:
                 self.status_text.value = "Fehler beim Anfordern einer neuen Tor-Identität"
                 
-            # Aktualisiere die IP-Adresse
+            # IP-Adresse aktualisieren
             self.update_tor_info()
-            
+                
         except ImportError:
             self.status_text.value = "Tor-Unterstützung ist nicht verfügbar. Bitte installieren Sie die erforderlichen Module (stem, PySocks)."
         except Exception as e:
             self.status_text.value = f"Fehler beim Anfordern einer neuen Tor-Identität: {str(e)}"
-    
+            
+        self.display()
+
     def update_tor_info(self):
         """Aktualisiert die Tor-Informationen in der UI."""
         # Status-Text aktualisieren
@@ -1109,7 +1113,7 @@ class EpisodeForm(npyscreen.ActionForm):
         # IP-Adresse aktualisieren
         if aniworld_globals.USE_TOR:
             try:
-                from src.aniworld.common.tor_client import get_tor_client
+                from aniworld.common.tor_client import get_tor_client
                 
                 # Thread für IP-Abfrage starten, um UI nicht zu blockieren
                 def update_ip_thread():
