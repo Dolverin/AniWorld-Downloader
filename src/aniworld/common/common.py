@@ -98,18 +98,30 @@ def fetch_url_content(
 def fetch_url_content_without_playwright(
     url: str, proxy: Optional[str] = None, check: bool = True
 ) -> Optional[bytes]:
+    """
+    Holt den Inhalt einer URL mithilfe direkter HTTP-Anfragen.
+    
+    Args:
+        url: Die URL, von der Inhalte abgerufen werden sollen
+        proxy: Optional, der zu verwendende Proxy
+        check: Optional, ob Fehler protokolliert werden sollen
+        
+    Returns:
+        Die abgerufenen Inhaltsdaten oder None bei Fehler
+    """
     headers = {
         'User-Agent': aniworld_globals.DEFAULT_USER_AGENT
     }
 
-    logging.debug("Using headers: %s", headers)
+    logging.debug(f"Direkte HTTP-Anfrage an: {url}")
+    logging.debug(f"Verwende Headers: {headers}")
 
     # Tor verwenden, wenn aktiviert
     if aniworld_globals.USE_TOR:
         try:
             from aniworld.common.tor_client import get_tor_client
 
-            logging.debug("Verwende Tor für Anfrage: %s", url)
+            logging.debug(f"Verwende Tor für Anfrage: {url}")
             tor_client = get_tor_client(use_tor=True)
 
             response, success = tor_client.make_request(
@@ -135,7 +147,7 @@ def fetch_url_content_without_playwright(
             logging.error(
                 "Tor-Unterstützung ist nicht verfügbar. Stelle sicher, dass die PySocks und stem Module installiert sind.")
         except Exception as e:
-            logging.error("Fehler bei Tor-Anfrage: %s", str(e))
+            logging.error(f"Fehler bei Tor-Anfrage: {str(e)}")
 
     # Normaler Proxy-Modus, wenn Tor nicht aktiviert oder fehlgeschlagen ist
     proxies = {}
@@ -163,27 +175,67 @@ def fetch_url_content_without_playwright(
         }
 
     try:
-        response = requests.get(
-            url,
-            headers=headers,
-            proxies=proxies,
-            timeout=300)
-        response.raise_for_status()
-
-        if "Deine Anfrage wurde als Spam erkannt." in response.text:
-            logging.critical(
-                "Your IP address is blacklisted. Please use a VPN, complete the captcha "
-                "by opening the browser link, or try again later.")
-
-        return response.content
-
-    except requests.exceptions.Timeout as timeout_error:
-        logging.critical("Request to %s timed out: %s", url, timeout_error)
-        return fetch_url_content_with_playwright(url, proxy, check)
-
-    except requests.exceptions.RequestException as request_error:
+        # Erhöhte Timeouts für stabilere Verbindungen
+        timeout_settings = (30, 300)  # (Connect-Timeout, Read-Timeout)
+        
+        # Wiederholungslogik für häufige Netzwerkfehler
+        max_retries = 3
+        retry_count = 0
+        backoff_factor = 2  # Exponentielle Wartezeit zwischen Versuchen
+        
+        while retry_count < max_retries:
+            try:
+                if retry_count > 0:
+                    logging.warning(f"Wiederholungsversuch {retry_count}/{max_retries} für URL: {url}")
+                    # Exponentielle Wartezeit zwischen Versuchen
+                    time.sleep(backoff_factor ** retry_count)
+                
+                response = requests.get(
+                    url,
+                    headers=headers,
+                    proxies=proxies,
+                    timeout=timeout_settings)
+                response.raise_for_status()
+                
+                if "Deine Anfrage wurde als Spam erkannt." in response.text:
+                    logging.critical(
+                        "Deine IP-Adresse wurde blockiert. Bitte verwende ein VPN, löse das Captcha "
+                        "indem du den Link im Browser öffnest, oder versuche es später erneut.")
+                
+                # Erfolg: Gib den Inhalt zurück
+                return response.content
+            
+            except (requests.exceptions.ConnectionError, 
+                   requests.exceptions.Timeout,
+                   ConnectionResetError,
+                   ConnectionRefusedError) as network_error:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    logging.error(f"Maximale Anzahl von Versuchen erreicht für URL: {url}")
+                    logging.error(f"Netzwerkfehler: {str(network_error)}")
+                    # Nach mehreren Versuchen: Fallback auf Playwright
+                    logging.warning(f"Verwende Playwright als Fallback für URL: {url}")
+                    return fetch_url_content_with_playwright(url, proxy, check)
+                else:
+                    logging.warning(f"Netzwerkfehler bei Versuch {retry_count}: {str(network_error)}")
+                    # Weiter mit nächstem Versuch
+            
+            except requests.exceptions.HTTPError as http_error:
+                # HTTP-Fehler (4xx, 5xx) - meist keine Wiederholung sinnvoll
+                if check:
+                    logging.error(f"HTTP-Fehler bei URL {url}: {str(http_error)}")
+                return fetch_url_content_with_playwright(url, proxy, check)
+                
+            except requests.exceptions.RequestException as request_error:
+                # Andere Anfragefehler
+                if check:
+                    logging.error(f"Anfragefehler bei URL {url}: {str(request_error)}")
+                return fetch_url_content_with_playwright(url, proxy, check)
+                
+    except Exception as global_error:
+        # Fange alle anderen Fehler ab
         if check:
-            logging.critical("Request to %s failed: %s", url, request_error)
+            logging.error(f"Unerwarteter Fehler bei HTTP-Anfrage an {url}: {str(global_error)}")
         return fetch_url_content_with_playwright(url, proxy, check)
 
 
@@ -1896,52 +1948,95 @@ def set_temp_wallpaper():
         file_path = os.path.join(temp_dir, 'wallpaper.png')
 
         try:
-            response = requests.get(base64.b64decode(data), timeout=15)
-            response.raise_for_status()
+            # Robustere Implementation mit Wiederholungsversuchen
+            max_retries = 3
+            retry_count = 0
+            
+            while retry_count < max_retries:
+                try:
+                    # Verwende eine kleine Datei, daher kurzer Timeout ausreichend
+                    response = requests.get(
+                        base64.b64decode(data), 
+                        timeout=(5, 10),  # (Connect-Timeout, Read-Timeout)
+                        headers={'User-Agent': aniworld_globals.DEFAULT_USER_AGENT}
+                    )
+                    response.raise_for_status()
+                    
+                    # Bei Erfolg: Schreibe Datei und breche Schleife ab
+                    with open(file_path, 'wb') as f:
+                        f.write(response.content)
+                    break
+                    
+                except (requests.RequestException, ConnectionError) as e:
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        logging.debug(f"Fehler beim Laden des Wallpapers nach {max_retries} Versuchen: {e}")
+                        return  # Breche die Funktion ab, wenn alle Versuche fehlschlugen
+                    logging.debug(f"Wallpaper-Download fehlgeschlagen, Versuch {retry_count}: {e}")
+                    time.sleep(1)  # Kurze Pause vor dem nächsten Versuch
 
-            with open(file_path, 'wb') as f:
-                f.write(response.content)
+            # Fahre nur fort, wenn die Datei erfolgreich heruntergeladen wurde
+            if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                set_wallpaper(file_path)
+                logging.debug("New wallpaper set: %s", file_path)
 
-            set_wallpaper(file_path)
-            logging.debug("New wallpaper set: %s", file_path)
-
-            minimize_all_windows()
-            if platform.system() == "Darwin":
-                show_messagebox(
-                    "DO NOT LOOK AT YOUR DESKTOP!\n(DO NOT PRESS FN + F11!!!)",
-                    "IMPORTANT!!!",
-                    "info"
-                )
-            elif platform.system() == "Linux":
-                time.sleep(5)
-                show_all_windows()
-            else:
-                time.sleep(5)
                 minimize_all_windows()
+                if platform.system() == "Darwin":
+                    show_messagebox(
+                        "DO NOT LOOK AT YOUR DESKTOP!\n(DO NOT PRESS FN + F11!!!)",
+                        "IMPORTANT!!!",
+                        "info"
+                    )
+                elif platform.system() == "Linux":
+                    time.sleep(5)
+                    show_all_windows()
+                else:
+                    time.sleep(5)
+                    minimize_all_windows()
 
-            if current_wallpaper:
-                set_wallpaper(current_wallpaper)
-                logging.debug(
-                    "Reverted to original wallpaper: %s",
-                    current_wallpaper)
-        except requests.RequestException as e:
-            logging.debug("Failed to download the wallpaper: %s", e)
+                if current_wallpaper:
+                    set_wallpaper(current_wallpaper)
+                    logging.debug(
+                        "Reverted to original wallpaper: %s",
+                        current_wallpaper)
+        except Exception as e:
+            logging.debug(f"Fehler beim Setzen des temporären Wallpapers: {e}")
 
 
 def fetch_anime_id(anime_title, season):
+    """
+    Ermittelt die MyAnimeList-ID für einen Anime-Titel.
+    
+    Args:
+        anime_title: Titel des Animes
+        season: Staffelnummer
+        
+    Returns:
+        MyAnimeList-ID oder None bei Fehler
+    """
     def clean_anime_title(title):
         name = re.sub(r' \(\d+ episodes\)', '', title)
         return re.sub(r'\s+', '%20', name)
 
     def fetch_mal_data(keyword):
-        response = requests.get(
-            f"https://myanimelist.net/search/prefix.json?type=anime&keyword={keyword}",
-            headers={
-                "User-Agent": aniworld_globals.DEFAULT_USER_AGENT},
-            timeout=10)
-        return response.json() if response.status_code == 200 else None
+        try:
+            # Verwende fetch_url_content für konsistentes Fehlerhandling
+            url = f"https://myanimelist.net/search/prefix.json?type=anime&keyword={keyword}"
+            content = fetch_url_content(
+                url,
+                check=False  # Keine kritischen Fehler loggen
+            )
+            if content:
+                return json.loads(content)
+            return None
+        except (json.JSONDecodeError, Exception) as e:
+            logging.debug(f"Fehler beim Abrufen der MAL-Daten für '{keyword}': {e}")
+            return None
 
     def find_best_match(mal_data):
+        if not mal_data or 'categories' not in mal_data or not mal_data['categories']:
+            return None
+            
         results = [
             entry for entry in mal_data['categories'][0]['items']
             if 'OVA' not in entry['name']
@@ -1951,7 +2046,11 @@ def fetch_anime_id(anime_title, season):
 
     def fetch_next_season_id(anime_id):
         url = f"https://myanimelist.net/anime/{anime_id}"
-        soup = BeautifulSoup(fetch_url_content(url), 'html.parser')
+        content = fetch_url_content(url, check=False)
+        if not content:
+            return None
+            
+        soup = BeautifulSoup(content, 'html.parser')
 
         sequel_div = soup.find(
             "div",
@@ -1965,30 +2064,41 @@ def fetch_anime_id(anime_title, season):
             if link_element:
                 match = re.search(r'/anime/(\d+)', link_element.get("href"))
                 return match.group(1) if match else None
-
+        
         return None
-
-    logging.debug("Fetching MAL ID for: %s", anime_title)
-    anime_id = None
-    keyword = clean_anime_title(anime_title)
-
-    mal_metadata = fetch_mal_data(keyword)
-    if not mal_metadata:
-        logging.debug("Failed to fetch MyAnimeList data.")
-        return None
-
-    best_match = find_best_match(mal_metadata)
-    if best_match:
-        anime_id = best_match['id']
-
-    while season > 1 and anime_id:
-        anime_id = fetch_next_season_id(anime_id)
-        if not anime_id:
-            logging.debug("Sequel (TV) not found")
+        
+    try:
+        logging.debug(f"Suche MAL-ID für: {anime_title}")
+        anime_id = None
+        keyword = clean_anime_title(anime_title)
+        
+        mal_metadata = fetch_mal_data(keyword)
+        if not mal_metadata:
+            logging.debug(f"Konnte keine MyAnimeList-Daten für '{anime_title}' abrufen.")
             return None
-        season -= 1
-
-    return anime_id
+            
+        best_match = find_best_match(mal_metadata)
+        if best_match:
+            anime_id = best_match['id']
+        else:
+            logging.debug(f"Kein passender Anime für '{anime_title}' gefunden.")
+            return None
+            
+        # Finde die richtige Staffel
+        season_counter = season
+        while season_counter > 1 and anime_id:
+            next_id = fetch_next_season_id(anime_id)
+            if not next_id:
+                logging.debug(f"Sequel (TV) für Staffel {season_counter} nicht gefunden")
+                return None
+                
+            anime_id = next_id
+            season_counter -= 1
+            
+        return anime_id
+    except Exception as e:
+        logging.error(f"Fehler beim Abrufen der Anime-ID für '{anime_title}': {e}")
+        return None
 
 
 def get_description(anime_slug: str):
