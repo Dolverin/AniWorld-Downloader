@@ -21,7 +21,7 @@ DEFAULT_ONLY_DIRECT_LINK = False
 DEFAULT_ONLY_COMMAND = False
 DEFAULT_PROXY = None
 DEFAULT_USE_PLAYWRIGHT = False
-DEFAULT_TERMINAL_SIZE = (90, 38)
+DEFAULT_TERMINAL_SIZE = (80, 24)  # Reduzierte Terminal-Größe für bessere Kompatibilität
 
 # Tor-Konfiguration
 USE_TOR = os.getenv('USE_TOR', 'False').lower() in ('true', '1', 't', 'y', 'yes')

@@ -515,16 +515,48 @@ def get_season_data(anime_slug: str):
 
 
 def set_terminal_size(columns: int = None, lines: int = None):
+    """
+    Versucht, die Terminal-Größe anzupassen, falls möglich.
+    Schlägt nicht fehl, falls die Anpassung nicht möglich ist.
+    
+    Args:
+        columns: Anzahl der Spalten (Breite des Terminals)
+        lines: Anzahl der Zeilen (Höhe des Terminals)
+    """
     logging.debug("Setting terminal size to %s columns and %s lines.", columns, lines)
-    system_name = platform.system()
+    
+    try:
+        system_name = platform.system()
 
-    if not columns or not lines:
-        columns, lines = aniworld_globals.DEFAULT_TERMINAL_SIZE
+        if not columns or not lines:
+            columns, lines = aniworld_globals.DEFAULT_TERMINAL_SIZE
 
-    if system_name == 'Darwin':
-        os.system(f"printf '\033[8;{lines};{columns}t'")
-
-    # TODO: Windows and Linux support
+        # MacOS Unterstützung
+        if system_name == 'Darwin':
+            os.system(f"printf '\033[8;{lines};{columns}t'")
+        # Linux Unterstützung
+        elif system_name == 'Linux':
+            try:
+                # Versuche es mit dem ANSI Escape-Code
+                os.system(f"printf '\033[8;{lines};{columns}t'")
+            except:
+                pass
+        # Windows Unterstützung
+        elif system_name == 'Windows':
+            try:
+                # Versuche für neuere Windows-Versionen mit Konsolen-API
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                kernel32.SetConsoleScreenBufferSize(kernel32.GetStdHandle(-11), ctypes.wintypes._COORD(columns, lines))
+            except:
+                try:
+                    # Alternativer Ansatz: cmd.exe verwenden
+                    os.system(f"mode con: cols={columns} lines={lines}")
+                except:
+                    pass
+    except Exception as e:
+        logging.debug(f"Fehler beim Ändern der Terminal-Größe: {e}")
+        # Keine Fehler werfen, sondern still fortfahren
 
 
 def get_season_and_episode_numbers(episode_url: str) -> tuple:

@@ -1614,6 +1614,7 @@ def check_other_extractors(episode_urls: list):
 
 
 
+
 def execute_with_params(params: Dict[str, Any]) -> None:
     """
     Führt die Verarbeitung mit den angegebenen Parametern aus und zeigt Fehlermeldungen im TUI an
@@ -1668,13 +1669,34 @@ def run_app_with_query(args):
             try:
                 logging.debug("Trying to resize Terminal.")
                 set_terminal_size()
+                # Prüfe und warne statt abzubrechen
+                check_terminal_size()
                 run_app(search_anime(slug=args.slug, link=args.link))
             except npyscreen.wgwidget.NotEnoughSpaceForWidget:
-                logging.debug("Not enough space for widget. Asking user to resize terminal.")
+                logging.debug("Not enough space for widget. Versuche alternative Darstellung.")
                 clear_screen()
-                print("Please increase your current terminal size.")
-                logging.debug("Exiting due to terminal size.")
-                sys.exit()
+                print("Das Terminal ist zu klein für die optimale Darstellung.")
+                print("Die Anwendung versucht, sich anzupassen...")
+                
+                # Reduzierte UI-Version mit minimaler Terminal-Größe
+                try:
+                    # Kleinere Mindestgröße erzwingen
+                    from aniworld.globals import DEFAULT_TERMINAL_SIZE
+                    # Temporär kleinere Größe setzen
+                    alt_size = (DEFAULT_TERMINAL_SIZE[0] - 10, DEFAULT_TERMINAL_SIZE[1] - 8)
+                    aniworld_globals.DEFAULT_TERMINAL_SIZE = alt_size
+                    logging.debug(f"Verwende alternative Terminal-Größe: {alt_size}")
+                    
+                    # Nochmal versuchen mit reduzierter Größe
+                    time.sleep(1)  # Kurz warten
+                    clear_screen()
+                    run_app(search_anime(slug=args.slug, link=args.link))
+                except Exception as e:
+                    # Bei erneutem Fehler endgültig abbrechen
+                    logging.error(f"Konnte UI nicht anpassen: {str(e)}")
+                    print("Die Terminal-Größe ist wirklich zu klein.")
+                    print("Bitte vergrößern Sie Ihr Terminal und starten Sie die Anwendung neu.")
+                    sys.exit(1)
         except KeyboardInterrupt:
             logging.debug("KeyboardInterrupt encountered. Exiting.")
             sys.exit()
@@ -1735,6 +1757,35 @@ def direct_execute_with_params(args):
         logging.error("Fehler bei der direkten Ausführung: %s", str(e))
         print(f"Ein Fehler ist aufgetreten: {str(e)}")
 
+
+def check_terminal_size(min_width=70, min_height=20):
+    """
+    Prüft, ob das Terminal groß genug ist, und gibt Hinweise statt Fehler aus.
+    
+    Args:
+        min_width: Mindestbreite des Terminals in Zeichen
+        min_height: Mindesthöhe des Terminals in Zeilen
+        
+    Returns:
+        True, wenn das Terminal groß genug ist, sonst False
+    """
+    try:
+        import shutil
+        columns, lines = shutil.get_terminal_size()
+        
+        if columns < min_width or lines < min_height:
+            print(f"Warnung: Das Terminal ist möglicherweise zu klein ({columns}x{lines}).")
+            print(f"Für optimale Darstellung wird eine Größe von mindestens {min_width}x{min_height} empfohlen.")
+            print("Die Anwendung wird trotzdem gestartet...")
+            print()
+            # 2 Sekunden warten, damit der Benutzer die Meldung lesen kann
+            import time
+            time.sleep(2)
+            return False
+        return True
+    except Exception as e:
+        logging.debug(f"Fehler bei der Terminal-Größenprüfung: {e}")
+        return True  # Bei Fehler trotzdem weitermachen
 
 if __name__ == "__main__":
     main()
