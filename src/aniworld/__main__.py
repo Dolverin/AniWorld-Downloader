@@ -1145,61 +1145,74 @@ class EpisodeForm(npyscreen.ActionForm):
         # Status-Text aktualisieren
         self.tor_label.value = f"{'Aktiv' if aniworld_globals.USE_TOR else 'Inaktiv'} - Tor {get_tor_version()}"
         
-        # IP-Adresse aktualisieren
-        if aniworld_globals.USE_TOR:
-            try:
-                from aniworld.common.tor_client import get_tor_client
-                from aniworld.common import is_tor_running
+        # IP-Adresse aktualisieren - Ignoriere die globale USE_TOR-Variable und prüfe direkt, ob Tor läuft
+        try:
+            from aniworld.common.tor_client import get_tor_client
+            from aniworld.common import is_tor_running
+            
+            # Erste Prüfung: Läuft der Tor-Dienst auf Systemebene?
+            if not is_tor_running():
+                self.tor_ip_text.value = "Tor-Dienst läuft nicht. Bitte starte Tor neu."
                 
-                # Prüfen, ob Tor-Dienst tatsächlich läuft
-                if not is_tor_running():
-                    self.tor_ip_text.value = "Tor-Dienst läuft nicht. Bitte starte Tor neu."
-                    self.display()
-                    return
+                # Falls die Einstellung auf aktiviert steht, korrigiere die Anzeige
+                if aniworld_globals.USE_TOR:
+                    self.tor_label.value = f"Inaktiv (Fehler) - Tor {get_tor_version()}"
+                    logging.warning("Tor sollte aktiv sein, ist aber nicht gestartet")
                 
-                # Thread für IP-Abfrage starten, um UI nicht zu blockieren
-                def update_ip_thread():
-                    try:
-                        tor_client = get_tor_client(use_tor=True)
-                        
-                        # Überprüfe, ob der Tor-Client wirklich läuft
-                        if not tor_client.is_running:
-                            def update_ui_error():
-                                self.tor_ip_text.value = "Tor-Client läuft nicht. Status wird korrigiert..."
-                                self.display()
-                                # Starte Tor, falls globale Variable sagt, dass es laufen sollte
-                                tor_client.start()
-                            
-                            if hasattr(self, 'parentApp') and hasattr(self.parentApp, '_Forms'):
-                                npyscreen.globals.MAINLOOP.schedule_task_in_main_thread(update_ui_error)
-                            return
-                        
-                        # IP-Adresse abrufen
-                        ip = tor_client.get_current_ip()
-                        
-                        # UI-Update in Hauptthread durchführen
-                        def update_ui():
-                            if ip:
-                                self.tor_ip_text.value = ip
-                            else:
-                                self.tor_ip_text.value = "IP-Adresse konnte nicht abgerufen werden. Tor möglicherweise nicht korrekt konfiguriert."
+                self.display()
+                return
+            
+            # Wenn Tor-Dienst läuft, aber die Einstellung deaktiviert ist, korrigiere auch hier die Anzeige
+            if not aniworld_globals.USE_TOR:
+                self.tor_label.value = f"Aktiv (extern) - Tor {get_tor_version()}"
+                logging.info("Tor läuft, obwohl es in der Anwendung deaktiviert ist")
+            
+            # Thread für IP-Abfrage starten, um UI nicht zu blockieren
+            def update_ip_thread():
+                try:
+                    # Hole den Tor-Client IMMER mit use_tor=True, wenn der Dienst läuft
+                    # Dies ignoriert die globale USE_TOR-Variable für die IP-Abfrage
+                    tor_client = get_tor_client(use_tor=True)
+                    
+                    # Überprüfe, ob der Tor-Client wirklich läuft
+                    if not tor_client.is_running:
+                        def update_ui_error():
+                            self.tor_ip_text.value = "Tor-Client läuft nicht. Status wird korrigiert..."
                             self.display()
+                            # Starte Tor
+                            tor_client.start()
                         
-                        # UI-Update ausführen
                         if hasattr(self, 'parentApp') and hasattr(self.parentApp, '_Forms'):
-                            npyscreen.globals.MAINLOOP.schedule_task_in_main_thread(update_ui)
-                    except Exception as e:
-                        logging.error(f"Fehler beim Abrufen der IP-Adresse: {str(e)}")
-                        import traceback
-                        logging.debug(f"Traceback: {traceback.format_exc()}")
-                
-                # Thread starten
-                threading.Thread(target=update_ip_thread, daemon=True).start()
-                
-            except ImportError:
-                self.tor_ip_text.value = "Tor-Module nicht verfügbar"
-        else:
-            self.tor_ip_text.value = "Tor ist deaktiviert"
+                            npyscreen.globals.MAINLOOP.schedule_task_in_main_thread(update_ui_error)
+                        return
+                    
+                    # IP-Adresse abrufen
+                    ip = tor_client.get_current_ip()
+                    
+                    # UI-Update in Hauptthread durchführen
+                    def update_ui():
+                        if ip:
+                            self.tor_ip_text.value = ip
+                        else:
+                            self.tor_ip_text.value = "IP-Adresse konnte nicht abgerufen werden. Tor möglicherweise nicht korrekt konfiguriert."
+                        self.display()
+                    
+                    # UI-Update ausführen
+                    if hasattr(self, 'parentApp') and hasattr(self.parentApp, '_Forms'):
+                        npyscreen.globals.MAINLOOP.schedule_task_in_main_thread(update_ui)
+                except Exception as e:
+                    logging.error(f"Fehler beim Abrufen der IP-Adresse: {str(e)}")
+                    import traceback
+                    logging.debug(f"Traceback: {traceback.format_exc()}")
+            
+            # Thread starten
+            threading.Thread(target=update_ip_thread, daemon=True).start()
+            
+        except ImportError:
+            self.tor_ip_text.value = "Tor-Module nicht verfügbar"
+        except Exception as e:
+            self.tor_ip_text.value = f"Tor-Fehler: {str(e)}"
+            logging.error(f"Fehler bei Tor-Info-Update: {str(e)}")
         
         # UI aktualisieren
         self.display()
